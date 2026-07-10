@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/qingyin-types",
+    "crates/qingyin-contract",
+    "crates/qingyin-provider",
+    "crates/qingyin-state",
+    "crates/qingyin-admission",
+    "crates/qingyin-observe",
+    "crates/qingyin-gateway",
+    "crates/qingyin-mock-provider",
+    "crates/qingyin-testkit",
+]
+default-members = [
+    "crates/qingyin-gateway",
+    "crates/qingyin-mock-provider",
+    "crates/qingyin-testkit",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+qingyin-admission = { path = "crates/qingyin-admission" }
+qingyin-contract = { path = "crates/qingyin-contract" }
+qingyin-observe = { path = "crates/qingyin-observe" }
+qingyin-provider = { path = "crates/qingyin-provider" }
+qingyin-state = { path = "crates/qingyin-state" }
+qingyin-types = { path = "crates/qingyin-types" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+expect_used = "deny"
+unwrap_used = "deny"

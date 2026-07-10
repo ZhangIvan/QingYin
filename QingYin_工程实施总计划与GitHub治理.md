@@ -58,7 +58,7 @@ GitHub 仓库建立后，为 `main` 配置以下规则：
 
 - Require pull request before merging，禁止 force push 和删除分支规则绕过。
 - Require conversation resolution、线性历史和通过的 required status checks。
-- 首批 required checks：`format-lint`、`contract-fixtures`、`unit`、`integration`、`security`、`review-gate`；后续增加 `sandbox-probe` 和 `load-smoke`。
+- G0/M1-01 required checks：`contract-fixtures`、`format-lint`、`unit`。M1-03 后增加 `integration`，M1-04 后增加 `security`，具备受控审阅机器人或独立维护团队后增加 `review-gate`；后续再增加 `sandbox-probe` 和 `load-smoke`。
 - 启用 secret scanning、push protection、Dependabot/security update；使用最小权限的 Actions token。
 - `CODEOWNERS` 在创建 Organization/维护团队后启用：协议/安全/状态/Provider/前端目录分别指派对应团队，不能提交虚构 GitHub 用户名。
 - 开启 release tag 保护；生产配置、密钥 reference、容量卡与 Provider 启用的变更要求审批记录。
