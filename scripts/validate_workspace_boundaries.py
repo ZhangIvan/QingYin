@@ -22,8 +22,8 @@ EXPECTED_INTERNAL_DEPENDENCIES = {
         "qingyin-types",
     },
     "qingyin-mock-provider": {"qingyin-provider", "qingyin-types"},
-    # Later stages add only the interface crate under test. M1-03 adds state first.
-    "qingyin-testkit": {"qingyin-contract", "qingyin-types"},
+    # Testkit grows only by the accepted interface stage; M1-03 adds state first.
+    "qingyin-testkit": {"qingyin-contract", "qingyin-state", "qingyin-types"},
 }
 
 
