@@ -1,0 +1,20 @@
+[package]
+name = "qingyin-testkit"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+qingyin-types = { path = "../qingyin-types" }
+qingyin-contract = { path = "../qingyin-contract" }
+qingyin-provider = { path = "../qingyin-provider" }
+qingyin-state = { path = "../qingyin-state" }
+qingyin-admission = { path = "../qingyin-admission" }
+qingyin-observe = { path = "../qingyin-observe" }
+qingyin-gateway = { path = "../qingyin-gateway" }
+qingyin-mock-provider = { path = "../qingyin-mock-provider" }

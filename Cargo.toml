@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/qingyin-types",
+  "crates/qingyin-contract",
+  "crates/qingyin-provider",
+  "crates/qingyin-state",
+  "crates/qingyin-admission",
+  "crates/qingyin-observe",
+  "crates/qingyin-gateway",
+  "crates/qingyin-mock-provider",
+  "crates/qingyin-testkit",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/qingyin/qingyin"
+rust-version = "1.76"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"

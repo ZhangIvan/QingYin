@@ -1,0 +1,40 @@
+{
+  "schema_version": "v1",
+  "privacy_class": "synthetic",
+  "golden_paths": [
+    "control.session.create.asr.v1",
+    "asr.ws.happy.v1",
+    "tts.ws.happy.v1",
+    "tts.http.happy.v1",
+    "control.session.cancel.v1",
+    "capabilities.scoped.v1"
+  ],
+  "error_and_resilience": [
+    "control.idempotency.same.v1",
+    "control.idempotency.conflict.v1",
+    "stream.ticket.race.v1",
+    "stream.start.invalid.v1",
+    "stream.audio.rate.v1",
+    "provider.create.failure.v1",
+    "provider.stream.failure.v1",
+    "provider.timeout.v1",
+    "stream.slow.consumer.v1",
+    "stream.cancel.race.v1",
+    "state.ttl.recovery.v1",
+    "policy.local_only.v1"
+  ],
+  "mock_profiles": [
+    "happy",
+    "slow_first",
+    "create_reject",
+    "fail_midstream",
+    "hang_until_cancel",
+    "quota_exhausted",
+    "protocol_violation"
+  ],
+  "assertions": [
+    "all fixtures use synthetic data only",
+    "all fixture identifiers are stable v1 identifiers",
+    "mock profiles match the M1 delivery specification"
+  ]
+}
