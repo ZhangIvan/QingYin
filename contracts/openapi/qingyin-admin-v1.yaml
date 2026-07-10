@@ -1,0 +1,405 @@
+openapi: 3.1.0
+info:
+  title: QingYin Administration API
+  version: 1.0.0-draft
+  description: >-
+    Organization-scoped management API. All resources are tenant-isolated and
+    every mutation produces an auditable operation or audit event.
+servers:
+  - url: https://admin-api.qingyin.example.com
+paths:
+  /v1/admin/workspaces:
+    get:
+      operationId: listWorkspaces
+      summary: List workspaces visible in the selected organization.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Workspace page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkspacePage' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+    post:
+      operationId: createWorkspace
+      summary: Create a workspace within the selected organization.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/ChangeReason'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkspaceRequest' }
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/workspaces/{workspace_id}:
+    parameters:
+      - $ref: '#/components/parameters/OrganizationId'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      operationId: getWorkspace
+      summary: Get a workspace and its immutable isolation identity.
+      security: [{ AdminBearer: [] }]
+      responses:
+        '200':
+          description: Workspace
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+    patch:
+      operationId: updateWorkspace
+      summary: Update mutable workspace settings or request a lifecycle transition.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/ChangeReason'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateWorkspaceRequest' }
+      responses:
+        '200':
+          description: Updated workspace or accepted asynchronous operation
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/Workspace' }
+                  - { $ref: '#/components/schemas/Operation' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/workspaces/{workspace_id}/capacity-cards:
+    get:
+      operationId: listCapacityCards
+      summary: List effective capacity cards for the selected workspace.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: environment_id
+          in: query
+          schema: { $ref: '#/components/schemas/ResourceId' }
+      responses:
+        '200':
+          description: Capacity card list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, request_id]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CapacityCard' }
+                  request_id: { $ref: '#/components/schemas/ResourceId' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/workspaces/{workspace_id}/quality-reports:
+    get:
+      operationId: listQualityReports
+      summary: Query privacy-safe quality aggregates and quality-gate outcomes.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: environment_id
+          in: query
+          schema: { $ref: '#/components/schemas/ResourceId' }
+        - name: provider_id
+          in: query
+          schema: { type: string, maxLength: 64 }
+        - name: window
+          in: query
+          schema: { type: string, enum: [hour, day, week, month] }
+      responses:
+        '200':
+          description: Quality report page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityReportPage' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/sessions/{session_id}/diagnostic:
+    get:
+      operationId: getSessionDiagnostic
+      summary: Read a role- and retention-gated session diagnostic snapshot.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - $ref: '#/components/parameters/SessionId'
+        - name: detail_level
+          in: query
+          schema: { type: string, enum: [l1, l2, l3, l4, l5] }
+      responses:
+        '200':
+          description: Diagnostic snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDiagnosticSnapshot' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/routing/policies/{policy_id}/preview:
+    post:
+      operationId: previewRoutingPolicy
+      summary: Simulate a policy against a capability snapshot without changing traffic.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - name: policy_id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ResourceId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PolicyPreviewRequest' }
+      responses:
+        '200':
+          description: Deterministic preview result; it never reserves capacity or contacts a Provider.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PolicyPreviewResult' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+  /v1/admin/operations/{operation_id}:
+    get:
+      operationId: getOperation
+      summary: Read the status of an asynchronous administration operation.
+      security: [{ AdminBearer: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OrganizationId'
+        - name: operation_id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/ResourceId' }
+      responses:
+        '200':
+          description: Operation status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+components:
+  securitySchemes:
+    AdminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: QingYin admin access token
+  parameters:
+    OrganizationId:
+      name: X-QingYin-Organization-Id
+      in: header
+      required: true
+      schema: { $ref: '#/components/schemas/ResourceId' }
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ResourceId' }
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ResourceId' }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 512 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 128 }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+      description: Expected resource version. Conflicts are rejected rather than overwritten.
+    ChangeReason:
+      name: X-QingYin-Change-Reason
+      in: header
+      required: true
+      schema: { type: string, minLength: 3, maxLength: 512 }
+      description: Human-readable reason recorded in the immutable audit event.
+  responses:
+    ApiError:
+      description: Canonical API error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      description: Opaque QingYin resource identifier.
+    Workspace:
+      type: object
+      required: [workspace_id, organization_id, name, status, resource_version, created_at_ms, updated_at_ms]
+      properties:
+        workspace_id: { $ref: '#/components/schemas/ResourceId' }
+        organization_id: { $ref: '#/components/schemas/ResourceId' }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        slug: { type: string, minLength: 3, maxLength: 64 }
+        status: { type: string, enum: [draft, active, suspended, archived, pending_delete, deleted] }
+        resource_version: { type: string, minLength: 1, maxLength: 128 }
+        data_residency: { type: string, enum: [cloud_allowed, local_only, named_region] }
+        created_at_ms: { type: integer, format: int64 }
+        updated_at_ms: { type: integer, format: int64 }
+      additionalProperties: false
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        slug: { type: string, minLength: 3, maxLength: 64 }
+        data_residency: { type: string, enum: [cloud_allowed, local_only, named_region] }
+      additionalProperties: false
+    UpdateWorkspaceRequest:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [active, suspended, archived, pending_delete] }
+      additionalProperties: false
+    WorkspacePage:
+      type: object
+      required: [items, request_id]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Workspace' }
+        next_cursor: { type: string }
+        request_id: { $ref: '#/components/schemas/ResourceId' }
+    CapacityCard:
+      type: object
+      required: [card_id, environment_id, status, calculated_at_ms, limits]
+      properties:
+        card_id: { $ref: '#/components/schemas/ResourceId' }
+        environment_id: { $ref: '#/components/schemas/ResourceId' }
+        status: { type: string, enum: [draft, review, active, stale, retired] }
+        calculated_at_ms: { type: integer, format: int64 }
+        limits:
+          type: object
+          required: [safe_sessions, safe_audio_bitrate_bps]
+          properties:
+            safe_sessions: { type: integer, minimum: 0 }
+            safe_audio_bitrate_bps: { type: integer, minimum: 0 }
+            tested_p95_ms: { type: integer, minimum: 0 }
+          additionalProperties: false
+      additionalProperties: false
+    QualityReport:
+      type: object
+      required: [report_id, window_start_ms, window_end_ms, task, sample_count, outcome]
+      properties:
+        report_id: { $ref: '#/components/schemas/ResourceId' }
+        window_start_ms: { type: integer, format: int64 }
+        window_end_ms: { type: integer, format: int64 }
+        task: { type: string, enum: [asr, tts, realtime] }
+        provider_id: { type: string, maxLength: 64 }
+        sample_count: { type: integer, minimum: 0 }
+        outcome: { type: string, enum: [pass, warn, fail, insufficient_sample] }
+        metrics: { type: object, additionalProperties: { type: number } }
+      additionalProperties: false
+    QualityReportPage:
+      type: object
+      required: [items, request_id]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/QualityReport' }
+        next_cursor: { type: string }
+        request_id: { $ref: '#/components/schemas/ResourceId' }
+    SessionDiagnosticSnapshot:
+      type: object
+      required: [diagnostic_id, session_id, detail_level, captured_at_ms, timeline]
+      properties:
+        diagnostic_id: { $ref: '#/components/schemas/ResourceId' }
+        session_id: { $ref: '#/components/schemas/ResourceId' }
+        detail_level: { type: string, enum: [l1, l2, l3, l4, l5] }
+        captured_at_ms: { type: integer, format: int64 }
+        timeline:
+          type: array
+          items:
+            type: object
+            required: [at_ms, type]
+            properties:
+              at_ms: { type: integer, format: int64 }
+              type: { type: string }
+              attributes: { type: object, additionalProperties: true }
+        route: { type: object, additionalProperties: true }
+        transport: { type: object, additionalProperties: true }
+        quality: { type: object, additionalProperties: true }
+      additionalProperties: false
+    PolicyPreviewRequest:
+      type: object
+      required: [task, mode]
+      properties:
+        task: { type: string, enum: [asr, tts, realtime] }
+        mode: { type: string, enum: [streaming, realtime, one_shot] }
+        language: { type: string, maxLength: 32 }
+        residency: { type: string, enum: [cloud_allowed, local_only, named_region] }
+        expected_audio_bitrate_bps: { type: integer, minimum: 0 }
+      additionalProperties: false
+    PolicyPreviewResult:
+      type: object
+      required: [eligible, reasons, snapshot_version, request_id]
+      properties:
+        eligible: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+        selected_route: { type: object, additionalProperties: true }
+        snapshot_version: { type: string }
+        request_id: { $ref: '#/components/schemas/ResourceId' }
+    Operation:
+      type: object
+      required: [operation_id, status, created_at_ms, updated_at_ms]
+      properties:
+        operation_id: { $ref: '#/components/schemas/ResourceId' }
+        status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        created_at_ms: { type: integer, format: int64 }
+        updated_at_ms: { type: integer, format: int64 }
+        result_ref: { $ref: '#/components/schemas/ResourceId' }
+        error: { $ref: '#/components/schemas/ApiError' }
+      additionalProperties: false
+    ApiError:
+      type: object
+      required: [code, category, message, retryable, request_id]
+      properties:
+        code: { type: string }
+        category: { type: string, enum: [auth, quota, validation, policy, session, upstream, capacity, internal] }
+        message: { type: string }
+        retryable: { type: boolean }
+        retry_after_ms: { type: integer, minimum: 0 }
+        diagnostic_id: { $ref: '#/components/schemas/ResourceId' }
+        request_id: { $ref: '#/components/schemas/ResourceId' }

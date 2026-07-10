@@ -1,0 +1,147 @@
+asyncapi: 3.0.0
+info:
+  title: QingYin Streaming API
+  version: 1.0.0-draft
+  description: Canonical WebSocket messages for ASR, TTS and realtime sessions.
+servers:
+  production:
+    host: api.qingyin.example.com
+    protocol: wss
+    security: [{ sessionTicket: [] }]
+channels:
+  asrStream:
+    address: /v1/asr/stream
+    messages:
+      start: { $ref: '#/components/messages/Start' }
+      audioInput: { $ref: '#/components/messages/AudioInput' }
+      flush: { $ref: '#/components/messages/Flush' }
+      stop: { $ref: '#/components/messages/Stop' }
+      cancel: { $ref: '#/components/messages/Cancel' }
+      serverEvent: { $ref: '#/components/messages/ServerEvent' }
+  ttsStream:
+    address: /v1/tts/stream
+    messages:
+      start: { $ref: '#/components/messages/Start' }
+      textAppend: { $ref: '#/components/messages/TextAppend' }
+      textCommit: { $ref: '#/components/messages/TextCommit' }
+      textReplace: { $ref: '#/components/messages/TextReplace' }
+      cancel: { $ref: '#/components/messages/Cancel' }
+      audioOutput: { $ref: '#/components/messages/AudioOutput' }
+      serverEvent: { $ref: '#/components/messages/ServerEvent' }
+  realtime:
+    address: /v1/realtime
+    messages:
+      start: { $ref: '#/components/messages/Start' }
+      audioInput: { $ref: '#/components/messages/AudioInput' }
+      turnCommit: { $ref: '#/components/messages/TurnCommit' }
+      outputCancel: { $ref: '#/components/messages/OutputCancel' }
+      cancel: { $ref: '#/components/messages/Cancel' }
+      audioOutput: { $ref: '#/components/messages/AudioOutput' }
+      serverEvent: { $ref: '#/components/messages/ServerEvent' }
+operations:
+  sendAsrInput:
+    action: send
+    channel: { $ref: '#/channels/asrStream' }
+    messages: [{ $ref: '#/channels/asrStream/messages/start' }, { $ref: '#/channels/asrStream/messages/audioInput' }, { $ref: '#/channels/asrStream/messages/flush' }, { $ref: '#/channels/asrStream/messages/stop' }, { $ref: '#/channels/asrStream/messages/cancel' }]
+  receiveAsrEvents:
+    action: receive
+    channel: { $ref: '#/channels/asrStream' }
+    messages: [{ $ref: '#/channels/asrStream/messages/serverEvent' }]
+  sendTtsInput:
+    action: send
+    channel: { $ref: '#/channels/ttsStream' }
+    messages: [{ $ref: '#/channels/ttsStream/messages/start' }, { $ref: '#/channels/ttsStream/messages/textAppend' }, { $ref: '#/channels/ttsStream/messages/textCommit' }, { $ref: '#/channels/ttsStream/messages/textReplace' }, { $ref: '#/channels/ttsStream/messages/cancel' }]
+  receiveTtsOutput:
+    action: receive
+    channel: { $ref: '#/channels/ttsStream' }
+    messages: [{ $ref: '#/channels/ttsStream/messages/serverEvent' }, { $ref: '#/channels/ttsStream/messages/audioOutput' }]
+  sendRealtimeInput:
+    action: send
+    channel: { $ref: '#/channels/realtime' }
+    messages: [{ $ref: '#/channels/realtime/messages/start' }, { $ref: '#/channels/realtime/messages/audioInput' }, { $ref: '#/channels/realtime/messages/turnCommit' }, { $ref: '#/channels/realtime/messages/outputCancel' }, { $ref: '#/channels/realtime/messages/cancel' }]
+  receiveRealtimeOutput:
+    action: receive
+    channel: { $ref: '#/channels/realtime' }
+    messages: [{ $ref: '#/channels/realtime/messages/serverEvent' }, { $ref: '#/channels/realtime/messages/audioOutput' }]
+components:
+  securitySchemes:
+    sessionTicket:
+      type: http
+      scheme: bearer
+      bearerFormat: QingYin one-time session ticket
+  messages:
+    Start:
+      payload: { $ref: '#/components/schemas/StartMessage' }
+    Flush:
+      payload: { $ref: '#/components/schemas/ControlMessage' }
+    Stop:
+      payload: { $ref: '#/components/schemas/ControlMessage' }
+    Cancel:
+      payload: { $ref: '#/components/schemas/ControlMessage' }
+    AudioInput:
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: Audio bytes encoded exactly as the accepted input AudioSpec. Ordering is the WebSocket frame order.
+    AudioOutput:
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: Audio bytes encoded exactly as the accepted output AudioSpec. The preceding tts.audio_started event defines audio_id and sequence zero.
+    TextAppend:
+      payload:
+        allOf:
+          - { $ref: '#/components/schemas/ControlMessage' }
+          - type: object
+            required: [text]
+            properties: { text: { type: string, maxLength: 2000 } }
+    TextCommit:
+      payload:
+        allOf:
+          - { $ref: '#/components/schemas/ControlMessage' }
+          - type: object
+            required: [commit_id]
+            properties: { commit_id: { type: string, maxLength: 128 }, text: { type: string, maxLength: 2000 } }
+    TextReplace:
+      payload:
+        allOf:
+          - { $ref: '#/components/schemas/ControlMessage' }
+          - type: object
+            required: [target_commit_id, text]
+            properties: { target_commit_id: { type: string, maxLength: 128 }, text: { type: string, maxLength: 2000 } }
+    TurnCommit:
+      payload: { $ref: '#/components/schemas/ControlMessage' }
+    OutputCancel:
+      payload: { $ref: '#/components/schemas/ControlMessage' }
+    ServerEvent:
+      payload: { $ref: '#/components/schemas/EventEnvelope' }
+  schemas:
+    StartMessage:
+      type: object
+      required: [type, event_id, session_id]
+      properties:
+        type: { const: start }
+        event_id: { type: string }
+        session_id: { type: string }
+        audio: { type: object, additionalProperties: true }
+        features: { type: object, additionalProperties: true }
+    ControlMessage:
+      type: object
+      required: [type, event_id]
+      properties:
+        type: { type: string, enum: [flush, stop, cancel, ping, text_append, text_commit, text_replace, turn.commit, output.cancel] }
+        event_id: { type: string }
+    EventEnvelope:
+      type: object
+      required: [type, event_id, session_id, sequence, occurred_at_ms, trace_id, schema_version, data]
+      properties:
+        type: { type: string }
+        event_id: { type: string }
+        session_id: { type: string }
+        sequence: { type: integer, minimum: 0 }
+        occurred_at_ms: { type: integer, format: int64 }
+        trace_id: { type: string }
+        schema_version: { const: v1 }
+        data: { type: object, additionalProperties: true }

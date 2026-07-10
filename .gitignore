@@ -1,0 +1,22 @@
+# Build artifacts and local caches
+/target/
+/coverage/
+/node_modules/
+__pycache__/
+/.pytest_cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+
+# Local output
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

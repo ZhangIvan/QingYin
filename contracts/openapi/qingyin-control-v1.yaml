@@ -1,0 +1,259 @@
+openapi: 3.1.0
+info:
+  title: QingYin Control API
+  version: 1.0.0-draft
+  description: Public control API. Streaming messages are defined in the companion AsyncAPI document.
+servers:
+  - url: https://api.qingyin.example.com
+paths:
+  /v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: List capabilities available to the authenticated project scope.
+      security: [{ ProjectApiKey: [] }]
+      responses:
+        '200':
+          description: Capability list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, request_id]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Capability' }
+                  request_id: { $ref: '#/components/schemas/ResourceId' }
+        '401': { $ref: '#/components/responses/ApiError' }
+  /v1/sessions:
+    post:
+      operationId: createSession
+      summary: Authorize and reserve a streaming or one-shot session.
+      security: [{ ProjectApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSessionRequest' }
+      responses:
+        '201':
+          description: Session lease created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionLease' }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '403': { $ref: '#/components/responses/ApiError' }
+        '409': { $ref: '#/components/responses/ApiError' }
+        '429': { $ref: '#/components/responses/ApiErrorWithRetry' }
+  /v1/sessions/{session_id}:
+    parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/ResourceId' }
+    get:
+      operationId: getSession
+      summary: Retrieve a tenant-visible session summary.
+      security: [{ ProjectApiKey: [] }]
+      responses:
+        '200':
+          description: Session summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionSummary' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+    delete:
+      operationId: cancelSession
+      summary: Request cancellation of an active session. The operation is idempotent.
+      security: [{ ProjectApiKey: [] }]
+      responses:
+        '202':
+          description: Cancellation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id, status, accepted_at_ms, request_id]
+                properties:
+                  session_id: { $ref: '#/components/schemas/ResourceId' }
+                  status: { type: string, enum: [cancel_requested, completed] }
+                  accepted_at_ms: { type: integer, format: int64 }
+                  request_id: { $ref: '#/components/schemas/ResourceId' }
+        '401': { $ref: '#/components/responses/ApiError' }
+        '404': { $ref: '#/components/responses/ApiError' }
+  /v1/tts/stream:
+    post:
+      operationId: streamTts
+      summary: Create and stream a one-shot TTS response.
+      security: [{ ProjectApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TtsStreamRequest' }
+      responses:
+        '200':
+          description: Audio byte stream. Session and audio metadata are returned in headers.
+          headers:
+            X-QingYin-Session-Id: { schema: { $ref: '#/components/schemas/ResourceId' } }
+            X-QingYin-Audio-Codec: { schema: { type: string } }
+            X-QingYin-Audio-Sample-Rate: { schema: { type: integer } }
+            X-Request-Id: { schema: { $ref: '#/components/schemas/ResourceId' } }
+          content:
+            audio/ogg: { schema: { type: string, format: binary } }
+            audio/mpeg: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/ApiError' }
+        '429': { $ref: '#/components/responses/ApiErrorWithRetry' }
+components:
+  securitySchemes:
+    ProjectApiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: QingYin project credential
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 16, maxLength: 128 }
+  responses:
+    ApiError:
+      description: Canonical API error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    ApiErrorWithRetry:
+      description: Canonical API error with retry guidance
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 0 } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+  schemas:
+    ResourceId:
+      type: string
+      minLength: 8
+      maxLength: 128
+      description: Opaque QingYin resource identifier.
+    AudioSpec:
+      type: object
+      required: [codec, sample_rate_hz, channels]
+      properties:
+        codec: { type: string, enum: [opus, mp3, pcm_s16le] }
+        container: { type: string, enum: [ogg, webm, raw, mpeg] }
+        sample_rate_hz: { type: integer, enum: [8000, 16000, 24000, 48000] }
+        channels: { type: integer, enum: [1, 2] }
+        frame_ms: { type: integer, minimum: 10, maximum: 200 }
+      additionalProperties: false
+    PolicyPreference:
+      type: object
+      properties:
+        profile: { type: string, enum: [balanced, latency_first, quality_first, cost_first, privacy_first, bandwidth_first] }
+        data_residency: { type: string, enum: [cloud_allowed, local_only, named_region] }
+        provider_hint: { type: string, maxLength: 64 }
+      additionalProperties: false
+    CreateSessionRequest:
+      type: object
+      required: [task, mode, client]
+      properties:
+        task: { type: string, enum: [asr, tts, realtime] }
+        mode: { type: string, enum: [streaming, realtime, one_shot] }
+        language: { type: string, maxLength: 32 }
+        audio: { $ref: '#/components/schemas/AudioSpec' }
+        output_audio: { $ref: '#/components/schemas/AudioSpec' }
+        features:
+          type: object
+          properties:
+            interim_results: { type: boolean }
+            punctuation: { type: boolean }
+            timestamps: { type: boolean }
+            marks: { type: boolean }
+          additionalProperties: false
+        policy: { $ref: '#/components/schemas/PolicyPreference' }
+        client:
+          type: object
+          required: [platform]
+          properties:
+            platform: { type: string, enum: [web, ios, android, server] }
+            sdk_version: { type: string, maxLength: 64 }
+            app_version: { type: string, maxLength: 64 }
+          additionalProperties: false
+        metadata:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string, maxLength: 256 }
+      additionalProperties: false
+    SessionLease:
+      type: object
+      required: [session_id, status, transport_mode, expires_at_ms, capabilities, trace_id]
+      properties:
+        session_id: { $ref: '#/components/schemas/ResourceId' }
+        status: { type: string, enum: [leased, connecting, ready] }
+        transport_mode: { type: string, enum: [direct_sdk, relay, edge, local] }
+        expires_at_ms: { type: integer, format: int64 }
+        accepted_audio: { $ref: '#/components/schemas/AudioSpec' }
+        accepted_output_audio: { $ref: '#/components/schemas/AudioSpec' }
+        capabilities: { type: array, items: { type: string }, maxItems: 32 }
+        connect:
+          type: object
+          description: Short-lived, opaque connection information. Never includes provider master credentials.
+          additionalProperties: true
+        trace_id: { $ref: '#/components/schemas/ResourceId' }
+      additionalProperties: false
+    SessionSummary:
+      type: object
+      required: [session_id, status, task, transport_mode, created_at_ms, updated_at_ms, trace_id]
+      properties:
+        session_id: { $ref: '#/components/schemas/ResourceId' }
+        status: { type: string, enum: [leased, connecting, active, draining, completed, cancelled, expired, failed] }
+        task: { type: string, enum: [asr, tts, realtime] }
+        transport_mode: { type: string, enum: [direct_sdk, relay, edge, local] }
+        created_at_ms: { type: integer, format: int64 }
+        updated_at_ms: { type: integer, format: int64 }
+        usage_summary: { type: object, additionalProperties: true }
+        terminal_reason: { type: string, maxLength: 64 }
+        trace_id: { $ref: '#/components/schemas/ResourceId' }
+      additionalProperties: false
+    TtsStreamRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 10000 }
+        voice: { type: string, maxLength: 128 }
+        audio: { $ref: '#/components/schemas/AudioSpec' }
+        speech:
+          type: object
+          properties:
+            speed: { type: number, minimum: 0.5, maximum: 2.0 }
+            pitch: { type: number, minimum: -12, maximum: 12 }
+            volume: { type: number, minimum: 0.0, maximum: 2.0 }
+            style: { type: string, maxLength: 64 }
+          additionalProperties: false
+        policy: { $ref: '#/components/schemas/PolicyPreference' }
+        marks: { type: boolean }
+      additionalProperties: false
+    Capability:
+      type: object
+      required: [task, modes, languages]
+      properties:
+        task: { type: string, enum: [asr, tts, realtime] }
+        modes: { type: array, items: { type: string } }
+        languages: { type: array, items: { type: string } }
+        features: { type: array, items: { type: string } }
+    ApiError:
+      type: object
+      required: [code, category, message, retryable, request_id]
+      properties:
+        code: { type: string }
+        category: { type: string, enum: [auth, quota, validation, policy, session, upstream, capacity, internal] }
+        message: { type: string }
+        retryable: { type: boolean }
+        retry_after_ms: { type: integer, minimum: 0 }
+        diagnostic_id: { $ref: '#/components/schemas/ResourceId' }
+        request_id: { $ref: '#/components/schemas/ResourceId' }
