@@ -10,6 +10,7 @@ on:
       - ".cargo/**"
       - "crates/**"
       - "scripts/validate_contract_fixtures.py"
+      - "scripts/validate_secret_regressions.py"
       - "scripts/validate_workspace_boundaries.py"
       - "Cargo.lock"
       - "Cargo.toml"
@@ -49,3 +50,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Run workspace tests
         run: cargo test --workspace --all-targets
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Scan for credential regressions
+        run: python3 scripts/validate_secret_regressions.py
+      - name: Run security boundary tests
+        run: cargo test -p qingyin-security -p qingyin-observe

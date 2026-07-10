@@ -33,7 +33,7 @@ M1 使用“小 PR、强门禁、按依赖串行合并”。每个阶段从最�
 | --- | --- | --- |
 | M1-01 + M1-02 | crate 依赖方向固定；任务和模式分离；ID、状态、错误、事件、AudioSpec、SessionLease 与冻结契约一致 | `format-lint`、`unit`、`contract-fixtures`；OpenAPI/模块 01/12/20 对照 Review |
 | M1-03 | 事务提交/回滚明确；reservation/outbox 原子边界可表达；TTL fake 使用虚拟时间且可重复；跨租户键不能碰撞 | 状态转换、事务、outbox 去重、过期/恢复、并发竞态单测 |
-| M1-04 | principal 不能由请求体覆盖；scope 默认拒绝；ticket 只存 hash、绑定主体且只能消费一次；敏感值不进入 Debug/日志 | 越权、过期、撤销、并发消费、redaction 与 secret regression 单测 |
+| M1-04 | principal 不能由请求体覆盖；scope 默认拒绝；ticket 只存 hash、绑定主体且只能消费一次；敏感值不进入 Debug/日志 | `security` 门禁；越权、过期、撤销、并发消费、redaction 与 secret regression 单测 |
 | M1-05 | 闸门顺序和拒绝原因稳定；拒绝包含可执行 retry-after；每个许可最多 settle 一次；release/settle 重试无副作用 | allowed/rejected/released/settled、重复调用、超时补偿和竞态单测 |
 
 ## 4. M1 后半程 Issue 路线图

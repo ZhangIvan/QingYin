@@ -11,8 +11,9 @@ EXPECTED_INTERNAL_DEPENDENCIES = {
     "qingyin-contract": {"qingyin-types"},
     "qingyin-provider": {"qingyin-contract", "qingyin-types"},
     "qingyin-state": {"qingyin-types"},
+    "qingyin-security": {"qingyin-state", "qingyin-types"},
     "qingyin-admission": {"qingyin-state", "qingyin-types"},
-    "qingyin-observe": {"qingyin-types"},
+    "qingyin-observe": {"qingyin-security", "qingyin-types"},
     "qingyin-gateway": {
         "qingyin-admission",
         "qingyin-contract",
