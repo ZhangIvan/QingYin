@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/qingyin-types",
+  "crates/qingyin-contract",
+  "crates/qingyin-provider",
+  "crates/qingyin-state",
+  "crates/qingyin-admission",
+  "crates/qingyin-observe",
+  "crates/qingyin-gateway",
+  "crates/qingyin-mock-provider",
+  "crates/qingyin-testkit",
+]
+
+[workspace.package]
+edition = "2024"
+license = "UNLICENSED"
+publish = false
+repository = "https://github.com/ZhangIvan/QingYin"
+rust-version = "1.85"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"

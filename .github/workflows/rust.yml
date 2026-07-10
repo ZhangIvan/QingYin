@@ -1,0 +1,59 @@
+name: Rust
+
+on:
+  pull_request:
+    paths:
+      - ".cargo/**"
+      - "crates/**"
+      - "scripts/validate_contract_fixtures.py"
+      - "scripts/validate_workspace_boundaries.py"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
+      - ".github/workflows/rust.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".cargo/**"
+      - "crates/**"
+      - "scripts/validate_contract_fixtures.py"
+      - "scripts/validate_workspace_boundaries.py"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
+      - ".github/workflows/rust.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format-lint:
+    name: format-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Validate crate boundaries
+        run: python3 scripts/validate_workspace_boundaries.py
+      - name: Validate fixture manifest
+        run: python3 scripts/validate_contract_fixtures.py
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run workspace tests
+        run: cargo test --workspace --all-targets

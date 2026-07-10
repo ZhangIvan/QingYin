@@ -1,0 +1,15 @@
+.PHONY: contract-fixtures format-lint unit
+
+PYTHON ?= python3
+
+contract-fixtures:
+	$(PYTHON) scripts/validate_contract_fixtures.py
+	$(PYTHON) scripts/validate_workspace_boundaries.py
+
+format-lint:
+	cargo fmt --all --check
+	cargo check --workspace --all-targets
+	cargo clippy --workspace --all-targets -- -D warnings
+
+unit:
+	cargo test --workspace --all-targets

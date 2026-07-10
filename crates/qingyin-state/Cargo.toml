@@ -1,0 +1,14 @@
+[package]
+name = "qingyin-state"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+qingyin-types = { path = "../qingyin-types" }

@@ -20,11 +20,11 @@ M1 是“可测核心骨架”，不是生产发布。它只依赖 MockProvider�
 | ID | 工作包 | 前置 | 可并行项 | 完成证据 |
 | --- | --- | --- | --- | --- |
 | M1-01 | Workspace bootstrap：crate 边界、依赖规则、错误处理、统一 lint 配置 | 无 | M1-02、M1-03 | workspace 依赖图审查；最小编译/格式检查 |
-| M1-02 | Canonical types/contract：ID、事件、错误、DTO、状态机、schema binding | M1-01 | M1-03、M1-04 | contract fixture 单测、OpenAPI/AsyncAPI 对照 |
-| M1-03 | Durable/Ephemeral State：迁移、Repository、事务、outbox、TTL 与内存 test double | M1-01 | M1-02、M1-04 | Postgres/Redis 集成测试；隔离和幂等测试 |
-| M1-04 | Security context：credential 校验、principal、scope、ticket、日志脱敏 | M1-02、M1-03 | M1-05 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试 |
-| M1-05 | Admission：容量/策略 snapshot、许可、reservation、release、retry-after | M1-03、M1-04 | M1-06 | 多闸门 allowed/rejected/released、TTL 与竞态测试 |
-| M1-06 | Provider Runtime：trait、registry、MockProvider/profile、错误映射 | M1-02 | M1-03、M1-05 | Provider Contract Suite 全通过 |
+| M1-02 | Canonical types/contract：ID、事件、错误、DTO、状态机、schema binding | M1-01 | M1-03 | contract fixture 单测、OpenAPI/AsyncAPI 对照 |
+| M1-03 | Durable/Ephemeral State：Repository trait、事务、reservation、outbox、TTL 与内存 test double | M1-01、M1-02 | M1-04 | 状态、事务、TTL、隔离和幂等单测；真实 Postgres/Redis 留待后续集成阶段 |
+| M1-04 | Security context：credential 校验、principal、scope、ticket、日志脱敏 | M1-03 | M1-05 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试 |
+| M1-05 | Admission：容量/策略 snapshot、许可、reservation、release/settle、retry-after | M1-04 | M1-06 | 多闸门 allowed/rejected/released/settled、TTL 与竞态测试 |
+| M1-06 | Provider Runtime：trait、registry、MockProvider/profile、错误映射 | M1-05 | M1-07 | Provider Contract Suite 全通过 |
 | M1-07 | Control Gateway：capabilities、create/get/cancel session、幂等、审计 | M1-02 至 M1-06 | M1-08 | HTTP contract/integration fixtures；无 Provider 凭证泄漏 |
 | M1-08 | Relay Streams：ASR WS、TTS WS、bounded channels、cancel/timeout/slow consumer | M1-06、M1-07 | M1-09 | streaming fixtures、资源释放与内存边界 smoke |
 | M1-09 | One-shot TTS HTTP：首字节语义、metadata、stream error 记录 | M1-06、M1-07 | M1-08 | `tts.http.happy` 及首字节前/后失败 fixture |
