@@ -1,17 +1,9 @@
 name: Rust
 
 on:
+  # Required checks must exist on every PR; path-filtered required workflows
+  # leave documentation-only changes permanently blocked.
   pull_request:
-    paths:
-      - ".cargo/**"
-      - "crates/**"
-      - "scripts/validate_contract_fixtures.py"
-      - "scripts/validate_workspace_boundaries.py"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "rust-toolchain.toml"
-      - "rustfmt.toml"
-      - ".github/workflows/rust.yml"
   push:
     branches: [main]
     paths:
