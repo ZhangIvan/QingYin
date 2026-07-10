@@ -15,12 +15,15 @@ except ModuleNotFoundError as exc:
 ROOT = Path(__file__).resolve().parent.parent
 
 REQUIRED_DOCUMENTS = (
-    "QingYin_系统设计目录与实施计划.md",
-    "QingYin_设计冻结审阅与实现准入清单.md",
-    "QingYin_工程实施总计划与GitHub治理.md",
-    "QingYin_M1_Rust核心骨架与运行规范.md",
-    "QingYin_M1_契约Fixture与MockProvider规范.md",
-    "QingYin_M1_实施Backlog与CI门禁.md",
+    "docs/INDEX.md",
+    "docs/02-architecture/INDEX.md",
+    "docs/02-architecture/QingYin_系统设计目录与实施计划.md",
+    "docs/02-architecture/QingYin_设计冻结审阅与实现准入清单.md",
+    "docs/04-delivery/INDEX.md",
+    "docs/04-delivery/QingYin_工程实施总计划与GitHub治理.md",
+    "docs/04-delivery/QingYin_M1_Rust核心骨架与运行规范.md",
+    "docs/04-delivery/QingYin_M1_契约Fixture与MockProvider规范.md",
+    "docs/04-delivery/QingYin_M1_实施Backlog与CI门禁.md",
 )
 
 

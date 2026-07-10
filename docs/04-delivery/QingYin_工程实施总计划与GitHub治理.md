@@ -46,9 +46,10 @@ main (受保护，只接受 PR)
 
 1. 读取任务关联的设计文档、契约和 fixture，确认不改变冻结边界。
 2. 运行对应单元、集成、契约和安全检查；若无法运行，明确记录阻塞而不是省略。
-3. 做一次变更审阅：检查正确性、状态机、取消/超时、资源释放、租户隔离、幂等、并发、错误映射、日志脱敏、指标基数和回滚影响。
-4. 形成 PR：描述目的、风险、测试证据、协议/数据迁移影响、容量/安全影响与未关闭项。
-5. CI 通过后进行独立 reviewer 审阅；只有所有讨论解决、必要审批完成、必需检查通过才合并。
+3. 对模块边界、状态不变量、取消/超时、资源释放、并发/安全约束和非直观取舍补充简洁的“为什么”注释；不写逐行复述式注释。
+4. 做一次变更审阅：检查正确性、状态机、取消/超时、资源释放、租户隔离、幂等、并发、错误映射、日志脱敏、指标基数和回滚影响。
+5. 形成 PR：描述目的、风险、测试证据、协议/数据迁移影响、容量/安全影响与未关闭项。
+6. CI 通过后进行独立 reviewer 审阅；只有所有讨论解决、必要审批完成、必需检查通过才合并。
 
 自动化检查不能替代独立人工审阅。若早期只有单一维护者，PR 仍必须保留自检清单、自动检查和变更记录；涉及安全、计量、删除、公开 API 或生产路由的高风险变更必须增加第二位维护者或安全/SRE 审阅后才允许合并。
 
@@ -58,7 +59,7 @@ GitHub 仓库建立后，为 `main` 配置以下规则：
 
 - Require pull request before merging，禁止 force push 和删除分支规则绕过。
 - Require conversation resolution、线性历史和通过的 required status checks。
-- 首批 required checks：`format-lint`、`contract-fixtures`、`unit`、`integration`、`security`、`review-gate`；后续增加 `sandbox-probe` 和 `load-smoke`。
+- 当前 required check：`contract-fixtures`。M1-01 合并后追加 `format-lint`、`unit`；M1-03 后追加 `integration`，M1-04 后追加 `security`，具备受控审阅机器人或独立维护团队后追加 `review-gate`；后续再增加 `sandbox-probe` 和 `load-smoke`。
 - 启用 secret scanning、push protection、Dependabot/security update；使用最小权限的 Actions token。
 - `CODEOWNERS` 在创建 Organization/维护团队后启用：协议/安全/状态/Provider/前端目录分别指派对应团队，不能提交虚构 GitHub 用户名。
 - 开启 release tag 保护；生产配置、密钥 reference、容量卡与 Provider 启用的变更要求审批记录。
@@ -79,12 +80,12 @@ GitHub 仓库建立后，为 `main` 配置以下规则：
 ## 7. GitHub 建库与首次推送步骤
 
 1. 初始化本地 Git 仓库并以当前设计资产建立首个基线提交。
-2. 使用已登录的 GitHub CLI 或网页创建私有仓库 `QingYin`，不得把 Provider credential、真实录音、客户文本或环境 secrets 纳入仓库。
+2. 使用已登录的 GitHub CLI 或网页创建公开仓库 `QingYin`，不得把 Provider credential、真实录音、客户文本或环境 secrets 纳入仓库；公开前必须执行凭证模式扫描。
 3. 添加 SSH 或 HTTPS `origin`，推送 `main`，核对云端 commit hash 与本地一致。
 4. 在 GitHub 配置第 5 节分支保护和安全能力；创建维护团队后再提交正式 `CODEOWNERS`。
 5. 从 `chore/G0-ci-governance` 开始通过 PR 建立第一个 CI/check 变更；通过后进入 `feat/M1-01-workspace-bootstrap`。
 
-当前已知环境限制：本机 GitHub CLI 未登录，且当前目录的 `.git` 是空目录。可以安全建立本地仓库基线，但创建远端/推送需要用户完成 GitHub 登录或提供已存在的私有仓库地址。
+当前状态：`ZhangIvan/QingYin` 已公开，`main` 已启用 PR、`contract-fixtures`、讨论解决、线性历史、禁止 force push 和删除的保护规则。高风险变更仍要求独立审阅；`CODEOWNERS` 在建立维护团队后再启用。
 
 ## 8. 每阶段 Review 与反思记录
 
