@@ -1,7 +1,7 @@
 # QingYin M1：实施 Backlog、CI 门禁与阶段验收包
 
-版本：v0.2
-状态：实现准备基线，不创建业务代码
+版本：v0.3
+状态：M1-01/M1-02 已完成，后续工作包按 Issue 路线图执行
 关联：M1 Rust 核心骨架、Fixture/MockProvider 规范、模块 08、测试验收与发布计划
 
 ## 1. M1 交付边界
@@ -17,21 +17,23 @@ M1 是“可测核心骨架”，不是生产发布。它只依赖 MockProvider�
 
 ## 2. 工作包与依赖
 
-| ID | 工作包 | 前置 | 可并行项 | 完成证据 |
+| ID | 工作包 | 前置 | 后续/并行关系 | 完成证据 |
 | --- | --- | --- | --- | --- |
-| M1-01 | Workspace bootstrap：crate 边界、依赖规则、错误处理、统一 lint 配置 | 无 | M1-02、M1-03 | workspace 依赖图审查；最小编译/格式检查 |
-| M1-02 | Canonical types/contract：ID、事件、错误、DTO、状态机、schema binding | M1-01 | M1-03 | contract fixture 单测、OpenAPI/AsyncAPI 对照 |
-| M1-03 | Durable/Ephemeral State：Repository trait、事务、reservation、outbox、TTL 与内存 test double | M1-01、M1-02 | M1-04 | 状态、事务、TTL、隔离和幂等单测；真实 Postgres/Redis 留待后续集成阶段 |
-| M1-04 | Security context：credential 校验、principal、scope、ticket、日志脱敏 | M1-03 | M1-05 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试 |
-| M1-05 | Admission：容量/策略 snapshot、许可、reservation、release/settle、retry-after | M1-04 | M1-06 | 多闸门 allowed/rejected/released/settled、TTL 与竞态测试 |
-| M1-06 | Provider Runtime：trait、registry、MockProvider/profile、错误映射 | M1-05 | M1-07 | Provider Contract Suite 全通过 |
-| M1-07 | Control Gateway：capabilities、create/get/cancel session、幂等、审计 | M1-02 至 M1-06 | M1-08 | HTTP contract/integration fixtures；无 Provider 凭证泄漏 |
-| M1-08 | Relay Streams：ASR WS、TTS WS、bounded channels、cancel/timeout/slow consumer | M1-06、M1-07 | M1-09 | streaming fixtures、资源释放与内存边界 smoke |
-| M1-09 | One-shot TTS HTTP：首字节语义、metadata、stream error 记录 | M1-06、M1-07 | M1-08 | `tts.http.happy` 及首字节前/后失败 fixture |
-| M1-10 | Usage/observability：outbox consumer、usage event、metrics、trace、健康检查 | M1-03、M1-05、M1-07 | M1-08、M1-09 | 使用去重、审计关联、低基数标签与 trace 断言 |
-| M1-11 | CI/Release evidence：schema lint、fixtures、测试环境、SBOM/依赖/secret 检查 | M1-01 至 M1-10 | 持续并行 | 绿色 CI、制品清单、变更记录和验收报告 |
+| M1-01 | Workspace bootstrap：crate 边界、依赖规则、错误处理、统一 lint 配置 | 无 | 已与 M1-02 在 PR #4 合并 | workspace 依赖图审查；最小编译/格式检查 |
+| M1-02 | Canonical types/contract：ID、事件、错误、DTO、状态机、schema binding | M1-01 | 完成后启动 M1-03 | contract fixture 单测、OpenAPI/AsyncAPI 对照 |
+| M1-03 | Durable/Ephemeral State：Repository trait、事务、reservation、outbox、TTL 与内存 test double | M1-01、M1-02 | 完成后启动 M1-04 | 状态、事务、TTL、隔离和幂等单测；真实 Postgres/Redis 留待后续集成阶段 |
+| M1-04 | Security context：credential 校验、principal、scope、ticket、日志脱敏 | M1-03 | 完成后启动 M1-05 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试 |
+| M1-05 | Admission：容量/策略 snapshot、许可、reservation、release/settle、retry-after | M1-04 | 完成后启动 M1-06 | 多闸门 allowed/rejected/released/settled、TTL 与竞态测试 |
+| M1-06 | Provider Runtime：trait、registry、MockProvider/profile、错误映射 | M1-05 | 完成后启动 M1-07 | Provider Contract Suite 全通过 |
+| M1-07 | Control Gateway：capabilities、create/get/cancel session、幂等、审计 | M1-02 至 M1-06 | 完成后可分别启动 M1-08、M1-09、M1-10 | HTTP contract/integration fixtures；无 Provider 凭证泄漏 |
+| M1-08 | Relay Streams：ASR WS、TTS WS、bounded channels、cancel/timeout/slow consumer | M1-06、M1-07 | 可与 M1-09、M1-10 使用独立 PR 并行 | streaming fixtures、资源释放与内存边界 smoke |
+| M1-09 | One-shot TTS HTTP：首字节语义、metadata、stream error 记录 | M1-06、M1-07 | 可与 M1-08、M1-10 使用独立 PR 并行 | `tts.http.happy` 及首字节前/后失败 fixture |
+| M1-10 | Usage/observability：outbox consumer、usage event、metrics、trace、健康检查 | M1-03、M1-05、M1-07 | 可与 M1-08、M1-09 使用独立 PR 并行 | 使用去重、审计关联、低基数标签与 trace 断言 |
+| M1-11 | CI/Release evidence：schema lint、fixtures、测试环境、SBOM/依赖/secret 检查 | M1-01 至 M1-10 | 门禁持续建设；最终验收等待 M1-10 | 绿色 CI、制品清单、变更记录和验收报告 |
 
 `M1-07` 之前不创建对外可用 Gateway；`M1-08/09` 之前不宣称“支持流式”；`M1-11` 不通过时不允许合并任何公开契约或状态变更。
+
+执行 Issue：M1-03 [#5](https://github.com/ZhangIvan/QingYin/issues/5)、M1-04 [#6](https://github.com/ZhangIvan/QingYin/issues/6)、M1-05 [#7](https://github.com/ZhangIvan/QingYin/issues/7)、M1-06 [#8](https://github.com/ZhangIvan/QingYin/issues/8)、M1-07 [#9](https://github.com/ZhangIvan/QingYin/issues/9)、M1-08 [#10](https://github.com/ZhangIvan/QingYin/issues/10)、M1-09 [#11](https://github.com/ZhangIvan/QingYin/issues/11)、M1-10 [#12](https://github.com/ZhangIvan/QingYin/issues/12)、M1-11 [#13](https://github.com/ZhangIvan/QingYin/issues/13)。
 
 ## 3. Definition of Ready 与 Definition of Done
 
