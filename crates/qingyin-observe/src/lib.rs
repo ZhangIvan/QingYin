@@ -1,11 +1,4 @@
-//! Trace, metrics, health, and redaction helpers.
-
-/// Redacts values that must never be written to logs or metrics.
-#[must_use]
-pub fn redact_secret(value: &str) -> &'static str {
-    if value.is_empty() {
-        "<empty>"
-    } else {
-        "<redacted>"
-    }
-}
+//! Trace, metrics, health, and redaction boundary.
+//!
+//! Security-aware redaction behavior starts in M1-04 so it is reviewed with
+//! principal, scope, and ticket handling rather than as an isolated helper.

@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
   "crates/qingyin-types",
   "crates/qingyin-contract",
@@ -13,10 +13,15 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/qingyin/qingyin"
-rust-version = "1.76"
+edition = "2024"
+license = "UNLICENSED"
+publish = false
+repository = "https://github.com/ZhangIvan/QingYin"
+rust-version = "1.85"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -24,7 +29,6 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"

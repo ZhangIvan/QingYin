@@ -1,12 +1,4 @@
-//! Scripted `MockProvider` profiles used by contract and unit tests.
-
-/// M1-required scripted mock profiles.
-pub const MOCK_PROFILES: &[&str] = &[
-    "happy",
-    "slow_first",
-    "create_reject",
-    "fail_midstream",
-    "hang_until_cancel",
-    "quota_exhausted",
-    "protocol_violation",
-];
+//! Scripted provider test-double boundary.
+//!
+//! Profile behavior starts with the provider runtime in M1-06. The fixture
+//! manifest records the required profile names without implementing them here.

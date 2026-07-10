@@ -1,7 +1,4 @@
-//! Gateway composition boundary for HTTP, WebSocket, admission, state, and provider orchestration.
-
-/// Returns the supported public API major version for the M1 bootstrap.
-#[must_use]
-pub const fn api_major_version() -> u8 {
-    1
-}
+//! HTTP, WebSocket, admission, state, and provider composition boundary.
+//!
+//! Handler and runtime behavior starts in M1-07 after all inner boundaries are
+//! independently reviewed and accepted.

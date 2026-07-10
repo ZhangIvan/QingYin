@@ -1,9 +1,5 @@
-//! Durable and ephemeral state abstractions for sessions, reservations, and outbox records.
-
-use qingyin_types::{SessionId, SessionStatus};
-
-/// Repository boundary for session state transitions.
-pub trait SessionRepository {
-    /// Persists a new status for a session.
-    fn set_status(&mut self, session_id: &SessionId, status: SessionStatus);
-}
+//! Durable and ephemeral state boundary.
+//!
+//! Repository, transaction, reservation, outbox, and TTL behavior starts in
+//! M1-03. Keeping this crate behavior-free in M1-02 makes that review boundary
+//! explicit.
