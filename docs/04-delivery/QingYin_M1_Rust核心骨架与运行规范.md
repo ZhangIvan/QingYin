@@ -28,8 +28,9 @@ M1 不做真实云 Provider、Direct SDK、Local Worker、LLM 编排、真实音
 | `qingyin-contract` | OpenAPI/AsyncAPI 对应 DTO、校验、错误序列化、fixture 反序列化 | `qingyin-types` | Provider、数据库、路由实现 |
 | `qingyin-provider` | ASR/TTS trait、能力声明、Provider error、Adapter registry | `qingyin-types`、`qingyin-contract` | Gateway HTTP、租户授权、账务、厂商以外的业务逻辑 |
 | `qingyin-state` | Repository/事务/Outbox/TTL state 的抽象与实现 | `qingyin-types` | WebSocket、厂商 SDK、请求 DTO |
+| `qingyin-security` | Verified principal/scope、短期 ticket、credential/ticket 脱敏类型 | `qingyin-types`、`qingyin-state` | HTTP middleware、真实 KMS、Provider 主凭证、Admission |
 | `qingyin-admission` | 限流、会话许可、预算预留、释放与拒绝原因 | `qingyin-types`、`qingyin-state` | HTTP handler、Provider 原生错误 |
-| `qingyin-observe` | tracing 初始化、指标、脱敏字段、健康检查 | `qingyin-types` | 文本/音频原文持久化 |
+| `qingyin-observe` | tracing 初始化、指标、脱敏字段、健康检查 | `qingyin-types`、`qingyin-security` | 文本/音频原文持久化 |
 | `qingyin-gateway` | axum/tokio 入口、认证 middleware、控制/WS handler、会话编排和优雅退出 | 前述内部 crate | 厂商 SDK、直接 SQL、业务密钥明文 |
 | `qingyin-mock-provider` | Scripted ASR/TTS 行为、受控时序、故障注入 | `qingyin-provider`、`qingyin-types` | 网络、真实密钥、生产配置 |
 | `qingyin-testkit` | fixture 读取、虚拟时钟、测试主体、断言与 fake telemetry | 全部接口 crate | 生产入口 |

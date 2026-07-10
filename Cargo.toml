@@ -5,6 +5,7 @@ members = [
   "crates/qingyin-contract",
   "crates/qingyin-provider",
   "crates/qingyin-state",
+  "crates/qingyin-security",
   "crates/qingyin-admission",
   "crates/qingyin-observe",
   "crates/qingyin-gateway",
