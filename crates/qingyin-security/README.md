@@ -15,7 +15,9 @@
 ## Trust rules
 
 - Only a credential verifier may construct a `Principal`; request DTOs never supply tenant ownership.
+- The `test-support` feature exposes only the closed `SecurityFixture` catalog through `security_context(SecurityFixture)`. Workspace validation restricts the feature to development dependencies. It compiles only under Cargo's exact `debug` profile; release and every custom/non-debug profile fail closed at compile time, including release profiles with debug assertions enabled.
 - Roles do not grant permissions implicitly. Every command checks a closed `Scope` value.
+- Admission lifecycle management requires the explicit `AdmissionManage` scope on a verified service account.
 - Ticket storage contains the HMAC digest key and structured binding metadata, never the raw ticket.
 - A ticket is valid only for its exact tenant, session, principal digest, channel, optional client binding, and live TTL entry.
 - A live record is `unused`; atomic compare-and-take removes it and returns `consumed`, while missing, expired, revoked, and replayed records remain indistinguishable.

@@ -46,8 +46,12 @@ pub struct PrincipalDigest([u8; 32]);
 
 impl PrincipalDigest {
     /// Creates a digest produced by a trusted credential verifier.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        allow(dead_code, reason = "reserved for the credential verifier")
+    )]
     #[must_use]
-    pub const fn new(value: [u8; 32]) -> Self {
+    pub(crate) const fn new(value: [u8; 32]) -> Self {
         Self(value)
     }
 
@@ -123,6 +127,8 @@ pub enum Scope {
     AdminRead,
     /// Mutate administration resources.
     AdminWrite,
+    /// Manage admission lifecycle on behalf of a tenant from a trusted service account.
+    AdmissionManage,
 }
 
 /// Explicit scope set with deny-by-default behavior.
@@ -150,6 +156,13 @@ impl ScopeSet {
 }
 
 /// Immutable identity and authorization result produced by credential verification.
+///
+/// External callers cannot mint a verified principal directly:
+///
+/// ```compile_fail
+/// use qingyin_security::Principal;
+/// let _mint = Principal::from_verified;
+/// ```
 #[derive(Clone, Eq, PartialEq)]
 pub struct Principal {
     principal_id: PrincipalId,
@@ -166,8 +179,12 @@ impl Principal {
     ///
     /// Request DTOs, headers other than the credential, and metadata must never
     /// supply or override these fields.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        allow(dead_code, reason = "reserved for the credential verifier")
+    )]
     #[must_use]
-    pub const fn from_verified(
+    pub(crate) const fn from_verified(
         principal_id: PrincipalId,
         credential_id: Option<CredentialId>,
         kind: PrincipalKind,
@@ -232,29 +249,36 @@ impl Principal {
 
 impl fmt::Debug for Principal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Principal")
-            .field("principal_id", &self.principal_id)
-            .field("credential_id", &self.credential_id)
-            .field("kind", &self.kind)
-            .field("role", &self.role)
-            .field("tenant_scope", &self.tenant_scope)
-            .field("scopes", &self.scopes)
-            .field("digest", &self.digest)
-            .finish()
+        formatter.write_str("Principal(<redacted>)")
     }
 }
 
 /// Request-local trusted security context.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// External callers cannot turn an arbitrary principal into a trusted context:
+///
+/// ```compile_fail
+/// use qingyin_security::SecurityContext;
+/// let _mint = SecurityContext::from_verified_principal;
+/// ```
+#[derive(Clone, Eq, PartialEq)]
 pub struct SecurityContext {
     principal: Principal,
+}
+impl fmt::Debug for SecurityContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecurityContext(<redacted>)")
+    }
 }
 
 impl SecurityContext {
     /// Creates a request context from a verified principal.
+    #[cfg_attr(
+        not(any(test, feature = "test-support")),
+        allow(dead_code, reason = "reserved for the credential verifier")
+    )]
     #[must_use]
-    pub const fn from_verified_principal(principal: Principal) -> Self {
+    pub(crate) const fn from_verified_principal(principal: Principal) -> Self {
         Self { principal }
     }
 
@@ -364,11 +388,52 @@ mod tests {
     }
 
     #[test]
-    fn principal_debug_redacts_subject_digest() -> SecurityResult<()> {
+    fn admission_management_scope_remains_explicit_for_service_accounts() -> SecurityResult<()> {
+        let service_context = SecurityContext::from_verified_principal(Principal::from_verified(
+            PrincipalId::new(resource_id("prn_admission001")?),
+            None,
+            PrincipalKind::ServiceAccount,
+            Role::Operator,
+            tenant("a")?,
+            ScopeSet::new([Scope::AdmissionManage]),
+            PrincipalDigest::new([9; 32]),
+        ));
+        assert_eq!(
+            service_context.principal().kind(),
+            PrincipalKind::ServiceAccount
+        );
+        assert!(
+            service_context
+                .require_scope(Scope::AdmissionManage)
+                .is_ok()
+        );
+
+        let owner_without_scope = context(Role::Owner, ScopeSet::default())?;
+        assert_eq!(
+            owner_without_scope.require_scope(Scope::AdmissionManage),
+            Err(SecurityError::PermissionDenied)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn principal_and_context_debug_redact_identity_metadata() -> SecurityResult<()> {
         let context = context(Role::Developer, ScopeSet::new([Scope::SessionRead]))?;
-        let debug = format!("{:?}", context.principal());
-        assert!(!debug.contains(&PrincipalDigest::new([7; 32]).encode()));
-        assert!(debug.contains("<redacted:principal-digest>"));
+        let principal_debug = format!("{:?}", context.principal());
+        let context_debug = format!("{context:?}");
+        assert_eq!(principal_debug, "Principal(<redacted>)");
+        assert_eq!(context_debug, "SecurityContext(<redacted>)");
+        for sensitive in [
+            "prn_test001",
+            "crd_test001",
+            "org_a001",
+            "wsp_a001",
+            "prj_a001",
+            "env_a001",
+        ] {
+            assert!(!principal_debug.contains(sensitive));
+            assert!(!context_debug.contains(sensitive));
+        }
         Ok(())
     }
 }

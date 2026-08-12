@@ -1,7 +1,7 @@
 # QingYin M1：阶段推进计划
 
 版本：v0.4
-状态：M1-01/M1-02 已完成，Issue 路线图执行中
+状态：M1-01 至 M1-04 已完成，M1-05 实现与门禁收敛中
 关联：M1 Rust 核心骨架、M1 契约 Fixture 与 MockProvider 规范、M1 实施 Backlog
 
 ## 1. 合并和依赖顺序
@@ -9,9 +9,9 @@
 M1 使用“小 PR、强门禁、按依赖串行合并”。每个阶段从最新 `main` 创建独立分支，前一阶段完成 CI、Review 和合并后才开始下一阶段。
 
 1. M1-01 + M1-02 已通过 [PR #4](https://github.com/ZhangIvan/QingYin/pull/4) 合并，形成 workspace 与 canonical contract 基线。
-2. M1-03 [#5](https://github.com/ZhangIvan/QingYin/issues/5) 只实现 state trait、transaction、reservation、outbox 与 TTL fake。
-3. M1-04 [#6](https://github.com/ZhangIvan/QingYin/issues/6) 只实现 security context、principal、scope、ticket 与 redaction。
-4. M1-05 [#7](https://github.com/ZhangIvan/QingYin/issues/7) 只实现 admission gate、reservation lifecycle、retry-after 与幂等 release/settle。
+2. M1-03 已通过 [PR #15](https://github.com/ZhangIvan/QingYin/pull/15) 合并 state trait、transaction、reservation、outbox 与 TTL fake。
+3. M1-04 已通过 [PR #16](https://github.com/ZhangIvan/QingYin/pull/16) 合并 security context、principal、scope、ticket 与 redaction。
+4. M1-05 [#7](https://github.com/ZhangIvan/QingYin/issues/7) 正在实现六门 admission、reservation lifecycle、retry-after、renew、幂等 release/settle 与过期回收。
 5. M1-06 Provider Runtime 必须等待 M1-05 合并；M1-07 Gateway 必须等待 M1-02 至 M1-06 全部完成。
 
 严禁把 M1-03、M1-04、M1-05 合入同一个 PR。阶段间的依赖通过已合并的 `main` 传递，不通过跨分支复制提交传递。
@@ -34,7 +34,7 @@ M1 使用“小 PR、强门禁、按依赖串行合并”。每个阶段从最�
 | M1-01 + M1-02 | crate 依赖方向固定；任务和模式分离；ID、状态、错误、事件、AudioSpec、SessionLease 与冻结契约一致 | `format-lint`、`unit`、`contract-fixtures`；OpenAPI/模块 01/12/20 对照 Review |
 | M1-03 | 事务提交/回滚明确；reservation/outbox 原子边界可表达；TTL fake 使用虚拟时间且可重复；跨租户键不能碰撞 | 状态转换、事务、outbox 去重、过期/恢复、并发竞态单测 |
 | M1-04 | principal 不能由请求体覆盖；scope 默认拒绝；ticket 只存 hash、绑定主体且只能消费一次；敏感值不进入 Debug/日志 | `security` 门禁；越权、过期、撤销、并发消费、redaction 与 secret regression 单测 |
-| M1-05 | 闸门顺序和拒绝原因稳定；拒绝包含可执行 retry-after；每个许可最多 settle 一次；release/settle 重试无副作用 | allowed/rejected/released/settled、重复调用、超时补偿和竞态单测 |
+| M1-05 | 六门顺序和拒绝原因稳定；拒绝包含合规 retry-after；租约可续且不复活终态；release/settle/回收只释放一次 | 全门 allowed/rejected、后续门回滚、重复/冲突终态、精确 TTL、续租、回收和竞态单测 |
 
 ## 4. M1 后半程 Issue 路线图
 

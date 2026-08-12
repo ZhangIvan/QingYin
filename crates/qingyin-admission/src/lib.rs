@@ -1,4 +1,20 @@
-//! Capacity, policy, and budget admission boundary.
-//!
-//! Gate evaluation and reservation lifecycle behavior starts in M1-05, after
-//! state and security invariants are available.
+//! Deterministic multi-gate admission and reservation lifecycle boundary.
+
+mod error;
+mod model;
+mod service;
+mod store;
+
+pub use error::{AdmissionError, AdmissionResult, CompensationTrigger};
+pub use model::{
+    ActualUsage, AdmissionActorBinding, AdmissionDecision, AdmissionDimensions, AdmissionGate,
+    AdmissionMetricLabels, AdmissionMetricOutcome, AdmissionOperation, AdmissionOperationKey,
+    AdmissionPending, AdmissionRequest, AdmissionRequestDigest, AdmissionReservation,
+    AdmissionRuntimeAuthority, AdmissionSnapshots, AttemptGeneration, BudgetAccountId,
+    CapacitySnapshotId, CommitResolution, GateRejection, GateScope, GateVerdict, GatewayPoolId,
+    LifecycleMutation, PolicySnapshotId, ProjectedUsage, ProviderPoolId, ReclaimReport,
+    RejectionReason, ReleaseReason, RenewalId, ReservationIdentity, ReservationLifecycle,
+    ReservationPolicy, ReservationReceipt, ReservationRenewal, RetryAfterMs, TerminalOutcome,
+};
+pub use service::AdmissionService;
+pub use store::{AdmissionAttempt, AdmissionStart, AdmissionStore};
