@@ -25,6 +25,27 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  msrv:
+    name: msrv
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install declared MSRV
+        run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Record runner and toolchain evidence
+        run: |
+          printf 'runner_os=%s\nrunner_arch=%s\nrunner_image_os=%s\nrunner_image_version=%s\n' \
+            "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          rustup run 1.85.0 rustc -Vv
+          rustup run 1.85.0 cargo -V
+      - name: Compile workspace on declared MSRV
+        run: >-
+          cargo +1.85.0 check --workspace --all-targets --all-features --locked
+
   format-lint:
     name: format-lint
     runs-on: ubuntu-latest
