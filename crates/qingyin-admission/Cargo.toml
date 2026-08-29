@@ -11,5 +11,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-qingyin-types = { path = "../qingyin-types" }
+async-trait = "0.1"
+qingyin-security = { path = "../qingyin-security" }
 qingyin-state = { path = "../qingyin-state" }
+qingyin-types = { path = "../qingyin-types" }
+
+[dev-dependencies]
+qingyin-security = { path = "../qingyin-security", features = ["test-support"] }

@@ -7,5 +7,9 @@
 3. [M1 契约 Fixture 与 MockProvider 规范](QingYin_M1_契约Fixture与MockProvider规范.md)
 4. [M1 实施 Backlog 与 CI 门禁](QingYin_M1_实施Backlog与CI门禁.md)
 5. [M1 后续阶段推进计划](QingYin_M1_阶段推进计划.md)
+6. [生产发布路线图（2026-08-12）](QingYin_生产发布路线图_2026-08-12.md)
+7. [持续交付执行计划（2026-08-12）](QingYin_持续交付执行计划_2026-08-12.md)
+8. [G0 / M1-05 验收与复盘（2026-08-12）](QingYin_G0_M1-05_验收与复盘_2026-08-12.md)
+9. [M1-06 Provider 运行时实施规格（2026-08-12）](QingYin_M1-06_Provider运行时实施规格_2026-08-12.md)
 
 阶段完成后，在本目录新增 `QingYin_<阶段>_验收与复盘.md`，并从此页链接。

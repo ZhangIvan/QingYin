@@ -1,7 +1,7 @@
 # QingYin M1：Rust 核心骨架与运行规范
 
 版本：v0.2
-状态：实现准备基线，尚未创建业务代码
+状态：实施中；M1-01 至 M1-04 已合并，M1-05 准入生命周期实现中
 关联：模块 01、02、05、06、13、15、16；首条 ASR/TTS 纵向交付切片
 
 ## 1. M1 目标与非目标
@@ -13,7 +13,7 @@ M1 必须交付：
 - `POST /v1/sessions`、`GET/DELETE /v1/sessions/{session_id}`、`GET /v1/capabilities` 的公开控制面骨架。
 - `WS /v1/asr/stream` 与 `WS /v1/tts/stream` 的 Mock 流；`POST /v1/tts/stream` 的一次性流式输出边界。
 - 一个只用于开发/CI 的 Scripted MockProvider，覆盖正常、慢、限流、建连失败、流中失败和取消。
-- Postgres 强一致状态接口、Redis TTL 状态接口及只限测试的内存实现。
+- 强一致状态与 TTL 状态接口，以及只限开发/CI 的确定性内存实现；真实 PostgreSQL/Redis Adapter 在生产路线 R2 关闭。
 - 多维 Admission 接口、可观察的预留/释放、统一错误和 trace 基础。
 
 M1 不做真实云 Provider、Direct SDK、Local Worker、LLM 编排、真实音频转码、管理控制台或 L4/L5 捕获。Realtime 仅保持协议 fixture，不开放运行时路径。
@@ -29,7 +29,7 @@ M1 不做真实云 Provider、Direct SDK、Local Worker、LLM 编排、真实音
 | `qingyin-provider` | ASR/TTS trait、能力声明、Provider error、Adapter registry | `qingyin-types`、`qingyin-contract` | Gateway HTTP、租户授权、账务、厂商以外的业务逻辑 |
 | `qingyin-state` | Repository/事务/Outbox/TTL state 的抽象与实现 | `qingyin-types` | WebSocket、厂商 SDK、请求 DTO |
 | `qingyin-security` | Verified principal/scope、短期 ticket、credential/ticket 脱敏类型 | `qingyin-types`、`qingyin-state` | HTTP middleware、真实 KMS、Provider 主凭证、Admission |
-| `qingyin-admission` | 限流、会话许可、预算预留、释放与拒绝原因 | `qingyin-types`、`qingyin-state` | HTTP handler、Provider 原生错误 |
+| `qingyin-admission` | 限流、会话许可、预算预留、释放与拒绝原因 | `qingyin-types`、`qingyin-state`、`qingyin-security` | HTTP handler、Provider 原生错误、credential 解析 |
 | `qingyin-observe` | tracing 初始化、指标、脱敏字段、健康检查 | `qingyin-types`、`qingyin-security` | 文本/音频原文持久化 |
 | `qingyin-gateway` | axum/tokio 入口、认证 middleware、控制/WS handler、会话编排和优雅退出 | 前述内部 crate | 厂商 SDK、直接 SQL、业务密钥明文 |
 | `qingyin-mock-provider` | Scripted ASR/TTS 行为、受控时序、故障注入 | `qingyin-provider`、`qingyin-types` | 网络、真实密钥、生产配置 |
@@ -59,11 +59,13 @@ M1 对真实音频只验证长度、帧顺序和协商 AudioSpec；MockProvider 
 
 ## 4. 状态、ticket 与事务边界
 
-| 数据类别 | M1 生产候选实现 | 测试实现 | 规则 |
+| 数据类别 | 长期生产实现（R2） | M1 测试实现 | 规则 |
 | --- | --- | --- | --- |
 | Organization/Workspace/Project/Environment、credential 元数据、session、reservation、usage event、audit/outbox | PostgreSQL | InMemoryStateStore | 生产状态的唯一事实来源；所有记录带完整归属链 |
 | ticket、连接心跳、令牌桶、活跃许可、幂等短缓存 | Redis | InMemoryTtlStore | 有 TTL；缓存丢失不得跳过授权或重复计费 |
 | 配置快照、能力快照 | 版本化文件/控制面表 | 固定 fixture | 仅通过 snapshot ID 引用，不在会话中查可变全局配置 |
+
+M1 只验证上述接口、原子性语义与确定性 fake，不以 fake 证明生产状态能力。真实 Adapter、migration、故障恢复与备份恢复按[生产发布路线图](QingYin_生产发布路线图_2026-08-12.md) R2 验收。
 
 会话创建的强一致边界：认证后验证完整资源链与策略，确定候选 MockProvider/transport，随后在一个数据库事务中写入 `session(status=leased)`、`route_snapshot`、`session_reservation`、`audit_event` 与 outbox。提交成功后才签发 ticket；ticket 写入失败时必须把 session 标记为失败并释放 reservation，或由短时补偿任务完成同等效果。
 
@@ -82,7 +84,7 @@ request id -> credential parse -> hash verify/revocation check -> principal cont
 
 - Project credential 只映射到一个允许范围；请求 body、metadata、header 均不能指定或覆盖 Workspace。
 - `Idempotency-Key` 的 scope 为 credential + operation + request digest；同 key 不同摘要返回标准冲突，不会产生第二个 reservation。
-- Admission 依次检查 API QPS、连接/活跃 session、Gateway bytes、Provider capacity、预算；每个拒绝都产生可观测原因和 `retry_after_ms`。
+- Admission 依次检查 API QPS、连接/活跃 session、Gateway bytes、Provider capacity、policy、预算；每个拒绝都产生可观测原因和合规的 `retry_after_ms`。
 - M1 route 只有 `mock.asr.realtime` 和 `mock.tts.streaming` 两个候选；`local_only` 没有 mock local 能力时返回明确的 policy/unsupported 错误，绝不伪装成云可用。
 - 对可接受连接，WS 首帧 `start` 验证 session/ticket/task/AudioSpec 后创建 Provider session；Provider 成功创建后才发 `session.ready`。
 

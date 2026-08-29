@@ -11,6 +11,10 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 base64 = "0.22"
 getrandom = "0.3"

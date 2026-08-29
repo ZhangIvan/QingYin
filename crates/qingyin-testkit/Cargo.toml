@@ -13,9 +13,11 @@ workspace = true
 
 [dependencies]
 async-trait = "0.1"
+qingyin-admission = { path = "../qingyin-admission" }
 qingyin-types = { path = "../qingyin-types" }
 qingyin-contract = { path = "../qingyin-contract" }
 qingyin-state = { path = "../qingyin-state" }
 
 [dev-dependencies]
 futures-executor = "0.3"
+qingyin-security = { path = "../qingyin-security", features = ["test-support"] }

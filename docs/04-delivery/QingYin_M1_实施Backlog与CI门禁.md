@@ -1,7 +1,7 @@
 # QingYin M1：实施 Backlog、CI 门禁与阶段验收包
 
 版本：v0.3
-状态：M1-01/M1-02 已完成，后续工作包按 Issue 路线图执行
+状态：M1-01 至 M1-04 已完成，M1-05 实现与门禁收敛中
 关联：M1 Rust 核心骨架、Fixture/MockProvider 规范、模块 08、测试验收与发布计划
 
 ## 1. M1 交付边界
@@ -21,9 +21,9 @@ M1 是“可测核心骨架”，不是生产发布。它只依赖 MockProvider�
 | --- | --- | --- | --- | --- |
 | M1-01 | Workspace bootstrap：crate 边界、依赖规则、错误处理、统一 lint 配置 | 无 | 已与 M1-02 在 PR #4 合并 | workspace 依赖图审查；最小编译/格式检查 |
 | M1-02 | Canonical types/contract：ID、事件、错误、DTO、状态机、schema binding | M1-01 | 完成后启动 M1-03 | contract fixture 单测、OpenAPI/AsyncAPI 对照 |
-| M1-03 | Durable/Ephemeral State：Repository trait、事务、reservation、outbox、TTL 与内存 test double | M1-01、M1-02 | 完成后启动 M1-04 | 状态、事务、TTL、隔离和幂等单测；真实 Postgres/Redis 留待后续集成阶段 |
-| M1-04 | Security context：credential 校验、principal、scope、ticket、日志脱敏 | M1-03 | 完成后启动 M1-05 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试 |
-| M1-05 | Admission：容量/策略 snapshot、许可、reservation、release/settle、retry-after | M1-04 | 完成后启动 M1-06 | 多闸门 allowed/rejected/released/settled、TTL 与竞态测试 |
+| M1-03 | Durable/Ephemeral State：Repository trait、事务、reservation、outbox、TTL 与内存 test double | M1-01、M1-02 | 已通过 PR #15 合并 | 状态、事务、TTL、隔离和幂等单测；真实 Postgres/Redis 留待 R2 |
+| M1-04 | Security context：principal、scope、ticket、日志脱敏 | M1-03 | 已通过 PR #16 合并 | 撤销、单次 ticket、跨 Workspace 与 log redaction 测试；HTTP credential verifier 留待 M1-07 |
+| M1-05 | Admission：六门 snapshot、许可、reservation、renew、release/settle/reclaim、retry-after | M1-04 | 实现与门禁收敛中；完成后启动 M1-06 | 全门 allowed/rejected、补偿、精确 TTL、重复/冲突终态、租户隔离与竞态测试 |
 | M1-06 | Provider Runtime：trait、registry、MockProvider/profile、错误映射 | M1-05 | 完成后启动 M1-07 | Provider Contract Suite 全通过 |
 | M1-07 | Control Gateway：capabilities、create/get/cancel session、幂等、审计 | M1-02 至 M1-06 | 完成后可分别启动 M1-08、M1-09、M1-10 | HTTP contract/integration fixtures；无 Provider 凭证泄漏 |
 | M1-08 | Relay Streams：ASR WS、TTS WS、bounded channels、cancel/timeout/slow consumer | M1-06、M1-07 | 可与 M1-09、M1-10 使用独立 PR 并行 | streaming fixtures、资源释放与内存边界 smoke |
@@ -83,7 +83,7 @@ M1 验收记录必须包含以下可定位证据，而不仅是一句“测试�
 - 对应 commit/config/fixture manifest hash、crate 依赖图和构建制品清单。
 - 三份接口契约的解析/兼容检查报告，以及 M1 已实现 operation/event 清单。
 - MockProvider 7 个 profile、黄金路径 6 项、错误/韧性 12 项的通过记录。
-- Postgres/Redis 状态一致性、ticket 单次消费、Workspace 隔离、cancel 释放、usage/outbox 去重和日志脱敏报告。
+- fake contract suite、ticket 单次消费、Workspace 隔离、cancel 释放、usage/outbox 去重和日志脱敏报告；真实 PostgreSQL/Redis 一致性与恢复作为 R2 强制证据，不能由 fake 代替。
 - 固定合成负载下的运行时 smoke：连接、首事件、TTS 首字节、cancel、内存/FD/任务收敛趋势；不填写未经压测推导的并发数。
 - 已知限制：仅 mock、无真实云/本地模型、无 Direct、无 Realtime runtime、无生产容量/SLO 承诺。
 

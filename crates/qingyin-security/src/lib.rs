@@ -5,6 +5,12 @@ mod principal;
 mod secret;
 mod ticket;
 
+#[cfg(qingyin_security_test_support_forbidden)]
+compile_error!("qingyin-security/test-support must not be enabled in release builds");
+
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 pub use error::{SecurityError, SecurityResult};
 pub use principal::{
     CredentialId, Principal, PrincipalDigest, PrincipalId, PrincipalKind, Role, Scope, ScopeSet,
