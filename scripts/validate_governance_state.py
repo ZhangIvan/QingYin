@@ -868,22 +868,23 @@ def stable_string_component(value: Any, label: str) -> StableOrderComponent:
     return (1, utf16_sort_key(value))
 
 
-def require_stable_array_order(
+def derive_stable_array_view(
     values: Any,
     label: str,
     primary_key: Callable[[Any, int], StableOrderKey],
     unique_key: Callable[[Any, int], StableOrderKey] | None = None,
-) -> None:
-    """Require an unordered API array to arrive in its frozen canonical order.
+) -> list[Any]:
+    """Validate an unordered array and return a stable, non-mutating view.
 
     Sort and uniqueness keys are schema-specific. The complete canonical item is a
     deterministic final tie-break, but never masks duplicate immutable identities.
-    The validator rejects an out-of-order response instead of normalizing it.
+    The input list and its items remain in their provider-native order so the raw
+    response bytes and hashes continue to describe exactly what was captured.
     """
 
     require(isinstance(values, list), f"{label} must be an array")
     seen: set[StableOrderKey] = set()
-    decorated: list[StableOrderKey] = []
+    decorated: list[tuple[StableOrderKey, Any]] = []
     for index, item in enumerate(values):
         key = primary_key(item, index)
         require(isinstance(key, tuple) and key, f"{label}[{index}] stable primary key missing")
@@ -891,8 +892,21 @@ def require_stable_array_order(
         require(isinstance(identity, tuple) and identity, f"{label}[{index}] stable unique key missing")
         require(identity not in seen, f"{label} contains a duplicate stable unique key")
         seen.add(identity)
-        decorated.append((*key, (2, canonical_json_v1(item, f"{label}[{index}]"))))
-    require(decorated == sorted(decorated), f"{label} must be in stable canonical order")
+        order_key = (*key, (2, canonical_json_v1(item, f"{label}[{index}]")))
+        decorated.append((order_key, item))
+    return [item for _, item in sorted(decorated, key=lambda entry: entry[0])]
+
+
+def require_stable_array_order(
+    values: Any,
+    label: str,
+    primary_key: Callable[[Any, int], StableOrderKey],
+    unique_key: Callable[[Any, int], StableOrderKey] | None = None,
+) -> None:
+    """Require a collector-derived array to use its frozen canonical order."""
+
+    stable_view = derive_stable_array_view(values, label, primary_key, unique_key)
+    require(values == stable_view, f"{label} must be in stable canonical order")
 
 
 def canonical_json_v1(value: Any, label: str = "root") -> bytes:
@@ -1154,9 +1168,9 @@ def validate_human_body_hashes(value: Any, label: str) -> list[dict[str, Any]]:
     return normalized
 
 
-def validate_endpoint_bundle_v2(value: Any) -> None:
+def validate_endpoint_bundle_v3(value: Any) -> None:
     bundle = require_exact_object(value, ("schema", "component", "responses"), "endpoint bundle")
-    require(bundle["schema"] == "gvn-endpoint-bundle-v2", "endpoint bundle schema mismatch")
+    require(bundle["schema"] == "gvn-endpoint-bundle-v3", "endpoint bundle schema mismatch")
     allowed_components = set(POST_MERGE_COMPONENTS)
     require(bundle["component"] in allowed_components, f"unknown endpoint bundle component: {bundle['component']!r}")
     responses = bundle["responses"]
@@ -1422,6 +1436,11 @@ def validate_package_request_bindings(
                 require(item["request"]["query"] == [["page", "1"], ["per_page", "100"]], f"paginated request query drifted: {item['label']}")
             else:
                 require(item["request"]["query"] == [], f"non-paginated request query must be empty: {item['label']}")
+            if item["label"] in ("workflow-jobs", "workflow-logs", "runner-provenance", "finding-ledger"):
+                require(
+                    item["request"]["body"] == {"label": item["label"]},
+                    f"derived request operation descriptor mismatch: {item['label']}",
+                )
 
     graphql_queries = {
         "pull-metadata": PULL_METADATA_QUERY,
@@ -1563,7 +1582,7 @@ def validate_package_response_semantics(
     require(isinstance(tree_response, dict), "candidate tree response must be an object")
     require(tree_response.get("sha") == candidate_tree and tree_response.get("truncated") is False, "candidate tree response SHA/truncation mismatch")
     require(isinstance(tree_response.get("tree"), list) and tree_response["tree"], "candidate tree entries missing")
-    require_stable_array_order(
+    tree_values = derive_stable_array_view(
         tree_response["tree"],
         "candidate-tree.tree",
         lambda item, item_index: (
@@ -1571,7 +1590,7 @@ def validate_package_response_semantics(
         ),
     )
     tree_entries: dict[str, dict[str, Any]] = {}
-    for index, tree_value in enumerate(tree_response["tree"]):
+    for index, tree_value in enumerate(tree_values):
         require(isinstance(tree_value, dict), f"candidate tree entry[{index}] must be an object")
         path = tree_value.get("path")
         require(isinstance(path, str) and path and path not in tree_entries, f"candidate tree entry[{index}] path invalid or duplicate")
@@ -1582,7 +1601,7 @@ def validate_package_response_semantics(
         tree_entries[path] = tree_value
     files = response_value(bundles["paths"], "pull-files")
     require(isinstance(files, list), "pull-files response must be an array")
-    require_stable_array_order(
+    files = derive_stable_array_view(
         files,
         "pull-files",
         lambda item, item_index: (
@@ -1615,7 +1634,7 @@ def validate_package_response_semantics(
 
     metadata_pr = response_value(bundles["metadata"], "pull-metadata")["data"]["repository"]["pullRequest"]
     threads_pr = response_value(bundles["discussion"], "review-threads")["data"]["repository"]["pullRequest"]
-    require_stable_array_order(
+    derive_stable_array_view(
         metadata_pr["labels"]["nodes"],
         "pull-metadata.labels.nodes",
         lambda item, item_index: (
@@ -1626,7 +1645,7 @@ def validate_package_response_semantics(
             stable_string_component(item.get("id") if isinstance(item, dict) else None, f"pull-metadata.labels.nodes[{item_index}].id"),
         ),
     )
-    require_stable_array_order(
+    derive_stable_array_view(
         metadata_pr["reviewRequests"]["nodes"],
         "pull-metadata.reviewRequests.nodes",
         lambda item, item_index: (
@@ -1654,7 +1673,7 @@ def validate_package_response_semantics(
             ),
         ),
     )
-    require_stable_array_order(
+    derive_stable_array_view(
         metadata_pr["assignees"]["nodes"],
         "pull-metadata.assignees.nodes",
         lambda item, item_index: (
@@ -1684,7 +1703,7 @@ def validate_package_response_semantics(
 
     github_reviews = response_value(bundles["review"], "github-reviews")
     require(isinstance(github_reviews, list), "GitHub reviews response must be an array")
-    require_stable_array_order(
+    github_reviews = derive_stable_array_view(
         github_reviews,
         "github-reviews",
         lambda item, item_index: (
@@ -1711,7 +1730,7 @@ def validate_package_response_semantics(
     require(len(github_review_ids) == len(set(github_review_ids)), "GitHub review immutable ids are duplicated")
     require(len(github_review_node_ids) == len(set(github_review_node_ids)), "GitHub review GraphQL ids are duplicated")
     review_threads = threads_pr["reviewThreads"]["nodes"]
-    require_stable_array_order(
+    review_threads = derive_stable_array_view(
         review_threads,
         "reviewThreads.nodes",
         lambda item, item_index: (
@@ -1727,7 +1746,7 @@ def validate_package_response_semantics(
         require(thread.get("isResolved") is True and isinstance(thread.get("isOutdated"), bool), f"review thread[{thread_index}] unresolved or outdated flag missing")
         comments = thread.get("comments", {}).get("nodes")
         require(isinstance(comments, list) and comments, f"review thread[{thread_index}] must contain complete comments")
-        require_stable_array_order(
+        comments = derive_stable_array_view(
             comments,
             f"reviewThreads.nodes[{thread_index}].comments.nodes",
             lambda item, item_index: (
@@ -1766,7 +1785,7 @@ def validate_package_response_semantics(
 
     issue_comments = response_value(bundles["discussion"], "issue-comments")
     require(isinstance(issue_comments, list), "issue-comments response must be an array")
-    require_stable_array_order(
+    issue_comments = derive_stable_array_view(
         issue_comments,
         "issue-comments",
         lambda item, item_index: (
@@ -1882,7 +1901,7 @@ def validate_package_response_semantics(
 
     check_response = response_value(bundles["checks"], "check-runs")
     check_runs = check_response["check_runs"]
-    require_stable_array_order(
+    check_runs = derive_stable_array_view(
         check_runs,
         "check-runs.check_runs",
         lambda item, item_index: (
@@ -1907,16 +1926,16 @@ def validate_package_response_semantics(
     require(isinstance(protection, dict) and isinstance(protection.get("required_status_checks"), dict), "branch protection required checks missing")
     required = protection["required_status_checks"]
     require(required.get("strict") is True, "branch protection strict must be true")
-    require_stable_array_order(
+    required_contexts = derive_stable_array_view(
         required.get("contexts"),
         "branch-protection.required_status_checks.contexts",
         lambda item, item_index: (
             stable_string_component(item, f"branch-protection.required_status_checks.contexts[{item_index}]"),
         ),
     )
-    require(tuple(required["contexts"]) == REQUIRED_CONTEXTS, "required context set mismatch")
+    require(tuple(required_contexts) == REQUIRED_CONTEXTS, "required context set mismatch")
     require(isinstance(required.get("checks"), list), "branch protection required app checks missing")
-    require_stable_array_order(
+    required_checks = derive_stable_array_view(
         required["checks"],
         "branch-protection.required_status_checks.checks",
         lambda item, item_index: (
@@ -1925,10 +1944,10 @@ def validate_package_response_semantics(
     )
     required_apps = {
         item.get("context"): item.get("app_id")
-        for item in required["checks"]
+        for item in required_checks
         if isinstance(item, dict)
     }
-    require(len(required["checks"]) == len(REQUIRED_CONTEXTS), "required check/app list contains duplicates or extras")
+    require(len(required_checks) == len(REQUIRED_CONTEXTS), "required check/app list contains duplicates or extras")
     require(tuple(required_apps) == REQUIRED_CONTEXTS, "required check/app context set mismatch")
     for context in REQUIRED_CONTEXTS:
         require_positive_int(required_apps[context], f"required check app id: {context}")
@@ -1986,8 +2005,13 @@ def validate_package_response_semantics(
     require_positive_int(repository_settings["owner"].get("id"), "repository owner id")
     require(repository_settings["owner"]["id"] == OWNER_GITHUB_ID, "repository owner identity mismatch")
 
-    rulesets = response_value(bundles["control"], "rulesets")
-    require(isinstance(rulesets, list), "rulesets response must be an array")
+    rulesets = derive_stable_array_view(
+        response_value(bundles["control"], "rulesets"),
+        "rulesets",
+        lambda item, item_index: (
+            stable_integer_component(item.get("id") if isinstance(item, dict) else None, f"rulesets[{item_index}].id"),
+        ),
+    )
     ruleset_ids: list[int] = []
     for index, ruleset in enumerate(rulesets):
         require(isinstance(ruleset, dict), f"ruleset[{index}] must be an object")
@@ -2001,7 +2025,7 @@ def validate_package_response_semantics(
             f"ruleset[{index}] contains unsupported non-empty policy details; freeze a new schema before accepting it",
         )
         ruleset_ids.append(ruleset["id"])
-    require(ruleset_ids == sorted(set(ruleset_ids)), "ruleset ids must be unique and sorted")
+    require(len(ruleset_ids) == len(set(ruleset_ids)), "ruleset ids must be unique")
 
     validator_source = require_exact_object(
         response_value(bundles["control"], "validator-source"),
@@ -2304,7 +2328,7 @@ def validate_package_response_semantics(
     require(isinstance(provenance["executions"], list) and len(provenance["executions"]) == len(REQUIRED_CONTEXTS), "runner provenance execution cardinality mismatch")
     workflow_runs_response = response_value(bundles["checks"], "workflow-runs")
     workflow_runs = workflow_runs_response["workflow_runs"]
-    require_stable_array_order(
+    workflow_runs = derive_stable_array_view(
         workflow_runs,
         "workflow-runs.workflow_runs",
         lambda item, item_index: (
@@ -2526,7 +2550,7 @@ def validate_merge_response_semantics(
     expected_post_contexts = REQUIRED_CONTEXTS if rust_scheduled else ("contract-fixtures",)
     require_nonnegative_int(post_checks.get("total_count"), "post-merge checks.total_count")
     require(post_checks.get("total_count") == len(post_checks["check_runs"]) == len(expected_post_contexts), "post-merge checks response is incomplete or has unexpected scheduling")
-    require_stable_array_order(
+    post_check_runs = derive_stable_array_view(
         post_checks["check_runs"],
         "post-merge-checks.check_runs",
         lambda item, item_index: (
@@ -2534,7 +2558,7 @@ def validate_merge_response_semantics(
         ),
     )
     post_check_names: list[str] = []
-    for index, item in enumerate(post_checks["check_runs"]):
+    for index, item in enumerate(post_check_runs):
         require(isinstance(item, dict), f"post-merge check[{index}] must be an object")
         require(item.get("head_sha") == effective_merge_sha, f"post-merge check[{index}] head SHA mismatch")
         require(item.get("status") == "completed" and item.get("conclusion") == "success", f"post-merge check[{index}] is not successful")
@@ -2571,7 +2595,7 @@ def bundle_digest_map(values: Any, expected_components: tuple[str, ...], label: 
     bundle_map: dict[str, dict[str, Any]] = {}
     digest_map: dict[str, str] = {}
     for index, bundle_value in enumerate(values):
-        validate_endpoint_bundle_v2(bundle_value)
+        validate_endpoint_bundle_v3(bundle_value)
         component = str(bundle_value["component"])
         require(component == expected_components[index], f"{label} component order mismatch at {index}: {component}")
         require(component not in bundle_map, f"duplicate {label} component: {component}")
@@ -2946,7 +2970,7 @@ def validate_finding_ledger(
         require(attestation["accepted_residual_ids"] == accepted_residual_ids, "attestation accepted_residual_ids differ from finding ledger")
 
 
-def validate_evidence_package_v1(
+def validate_evidence_package_v2(
     value: Any,
     current_context: CurrentPRContext | None = None,
     authorized_target_type: str | None = None,
@@ -2966,7 +2990,7 @@ def validate_evidence_package_v1(
         ),
         "evidence package",
     )
-    require(package["schema"] == "gvn-evidence-package-v1", "evidence package schema mismatch")
+    require(package["schema"] == "gvn-evidence-package-v2", "evidence package schema mismatch")
     require(package["activation_binding"] is None or isinstance(package["activation_binding"], dict), "activation binding must be null or an object")
     require(package["phase"] in ("pre-attestation", "stable-window-start", "stable-window-end", "post-merge"), "evidence package phase invalid")
     if package["phase"] == "pre-attestation":
@@ -3089,7 +3113,7 @@ def validate_evidence_sequence(
 ) -> None:
     require(packages, "evidence sequence cannot be empty")
     for package in packages:
-        validate_evidence_package_v1(package, current_context, authorized_target_type)
+        validate_evidence_package_v2(package, current_context, authorized_target_type)
     require(
         all(canonical_json_v1(package["activation_binding"]) == canonical_json_v1(packages[0]["activation_binding"]) for package in packages),
         "activation binding changed across the evidence sequence",
@@ -3435,7 +3459,7 @@ def read_evidence_package_file(path: Path) -> dict[str, Any]:
         os.close(descriptor)
     evidence_text = validate_utf8_bytes(evidence_bytes, str(path))
     evidence_value = parse_json_strict(evidence_text)
-    require(isinstance(evidence_value, dict) and evidence_value.get("schema") == "gvn-evidence-package-v1", "--evidence-json requires a unified gvn-evidence-package-v1")
+    require(isinstance(evidence_value, dict) and evidence_value.get("schema") == "gvn-evidence-package-v2", "--evidence-json requires a unified gvn-evidence-package-v2")
     scan_evidence_secrets(evidence_value)
     return evidence_value
 
@@ -3446,11 +3470,11 @@ def validate_evidence_object(value: Any) -> None:
     schema = value.get("schema")
     validators = {
         "gvn-request-v1": validate_request_v1,
-        "gvn-endpoint-bundle-v2": validate_endpoint_bundle_v2,
+        "gvn-endpoint-bundle-v3": validate_endpoint_bundle_v3,
         "gvn-pre-attestation-v1": validate_pre_attestation_v1,
         "gvn-attestation-v1": validate_attestation_v1,
         "gvn-manifest-v1": validate_manifest_v1,
-        "gvn-evidence-package-v1": validate_evidence_package_v1,
+        "gvn-evidence-package-v2": validate_evidence_package_v2,
     }
     require(schema in validators, f"unknown evidence schema: {schema!r}")
     validators[str(schema)](value)
@@ -3503,6 +3527,13 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         stable_integer_component(item.get("id") if isinstance(item, dict) else None, f"numeric-order[{item_index}].id"),
     )
     require_stable_array_order(numeric_order_fixture, "numeric-order", numeric_key)
+    provider_order_fixture = list(reversed(numeric_order_fixture))
+    provider_order_snapshot = json.loads(json.dumps(provider_order_fixture))
+    require(
+        derive_stable_array_view(provider_order_fixture, "provider-order", numeric_key) == numeric_order_fixture,
+        "provider-order stable semantic view mismatch",
+    )
+    require(provider_order_fixture == provider_order_snapshot, "provider-order derivation mutated the raw array")
     expect_failure_message(
         lambda: require_stable_array_order(list(reversed(numeric_order_fixture)), "numeric-order", numeric_key),
         "numeric-order must be in stable canonical order",
@@ -3709,7 +3740,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
                 return {PAGINATED_OBJECT_LABELS[label]: [], "total_count": 0}
             return {"component": component, "label": label}
         return {
-            "schema": "gvn-endpoint-bundle-v2",
+            "schema": "gvn-endpoint-bundle-v3",
             "component": component,
             "responses": [
                 sample_response(label, overrides.get(label, default_value(label)))
@@ -3728,13 +3759,14 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     validate_evidence_object(endpoint_fixture)
     endpoint_sha = hashlib.sha256(canonical_json_v1(endpoint_fixture)).hexdigest()
     require(
-        endpoint_sha == "5b3999aa7330eafc6d863d31eca4efcd2c31446e5aa3810df29837128d440efa",
+        endpoint_sha == "0ab458f39ecbd3c64a0a419c3abbb00e0c2094f682436cda3a2595351462897c",
         f"endpoint golden hash drifted: {endpoint_sha}",
     )
-    expect_failure(
-        lambda: validate_evidence_object({**endpoint_fixture, "schema": "gvn-endpoint-bundle-v1"}),
-        "retired endpoint bundle v1",
-    )
+    for retired_endpoint_schema in ("gvn-endpoint-bundle-v1", "gvn-endpoint-bundle-v2"):
+        expect_failure(
+            lambda schema=retired_endpoint_schema: validate_evidence_object({**endpoint_fixture, "schema": schema}),
+            f"retired endpoint bundle schema: {retired_endpoint_schema}",
+        )
     expect_failure(lambda: validate_evidence_object({**endpoint_fixture, "unexpected": True}), "endpoint extra field")
     missing_body_hash_sidecar = json.loads(json.dumps(endpoint_fixture))
     del missing_body_hash_sidecar["responses"][0]["human_body_hashes"]
@@ -4361,6 +4393,34 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         if rederive_human_body_hashes:
             item["human_body_hashes"] = derive_human_body_hashes(label, value)
 
+    def expect_reversed_response_array_acceptance(
+        component: str,
+        response_label: str,
+        array_getter: Callable[[Any], list[Any]],
+        test_label: str,
+    ) -> None:
+        candidate_map = json.loads(json.dumps(pre_bundle_map))
+        response = response_value(candidate_map[component], response_label)
+        array = array_getter(response)
+        require(len(array) > 1, f"self-test requires at least two items: {test_label}")
+        array.reverse()
+        replace_json_response(candidate_map[component], response_label, response)
+        envelope = response_item(candidate_map[component], response_label)
+        frozen_transport = {
+            field: envelope[field]
+            for field in ("response_body_base64", "response_body_sha256", "response_canonical_sha256")
+        }
+        original_envelope = response_item(pre_bundle_map[component], response_label)
+        require(
+            all(frozen_transport[field] != original_envelope[field] for field in frozen_transport),
+            f"raw-order change did not reset transport/canonical evidence: {test_label}",
+        )
+        validate_package_response_semantics(candidate_map, semantic_root)
+        require(
+            all(envelope[field] == value for field, value in frozen_transport.items()),
+            f"semantic validation mutated raw response evidence: {test_label}",
+        )
+
     def expect_reversed_response_array_failure(
         component: str,
         response_label: str,
@@ -4400,6 +4460,34 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         )
 
     validate_package_response_semantics(pre_bundle_map, semantic_root)
+    for derived_component, derived_label in (
+        ("checks", "workflow-jobs"),
+        ("checks", "workflow-logs"),
+        ("runner", "runner-provenance"),
+        ("finding", "finding-ledger"),
+    ):
+        require(
+            response_item(pre_bundle_map[derived_component], derived_label)["request"]["body"]
+            == {"label": derived_label},
+            f"valid derived request operation descriptor mismatch: {derived_label}",
+        )
+    mismatched_derived_request_map = json.loads(json.dumps(pre_bundle_map))
+    mismatched_derived_request = response_item(mismatched_derived_request_map["checks"], "workflow-jobs")
+    mismatched_derived_request["request"]["body"] = {"label": "workflow-logs"}
+    mismatched_derived_request["request_canonical_sha256"] = hashlib.sha256(
+        canonical_json_v1(mismatched_derived_request["request"])
+    ).hexdigest()
+    expect_failure_message(
+        lambda: validate_package_request_bindings(
+            mismatched_derived_request_map,
+            19,
+            "b" * 40,
+            "c" * 40,
+            None,
+        ),
+        "derived request operation descriptor mismatch: workflow-jobs",
+        "mismatched derived request operation descriptor",
+    )
     reversed_endpoint_bundle = json.loads(json.dumps(pre_bundle_map["checks"]))
     reversed_endpoint_bundle["responses"].reverse()
     expect_failure_message(
@@ -4407,32 +4495,28 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "endpoint bundle responses are not canonically sorted",
         "reversed multi-response endpoint bundle",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "paths",
         "candidate-tree",
         lambda response: response["tree"],
-        "candidate-tree.tree must be in stable canonical order",
         "reversed candidate tree entries",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "paths",
         "pull-files",
         lambda response: response,
-        "pull-files must be in stable canonical order",
         "reversed pull files",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "checks",
         "check-runs",
         lambda response: response["check_runs"],
-        "check-runs.check_runs must be in stable canonical order",
         "reversed check runs",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "checks",
         "workflow-runs",
         lambda response: response["workflow_runs"],
-        "workflow-runs.workflow_runs must be in stable canonical order",
         "reversed workflow runs",
     )
     expect_reversed_response_array_failure(
@@ -4449,20 +4533,34 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "execution Git objects must follow the fixed required-context sequence",
         "reversed execution objects",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "control",
         "branch-protection",
         lambda response: response["required_status_checks"]["contexts"],
-        "branch-protection.required_status_checks.contexts must be in stable canonical order",
         "reversed branch-protection contexts",
     )
-    expect_reversed_response_array_failure(
+    expect_reversed_response_array_acceptance(
         "control",
         "branch-protection",
         lambda response: response["required_status_checks"]["checks"],
-        "branch-protection.required_status_checks.checks must be in stable canonical order",
         "reversed branch-protection checks",
     )
+    provider_order_protection_map = json.loads(json.dumps(pre_bundle_map))
+    provider_order_protection = response_value(provider_order_protection_map["control"], "branch-protection")
+    provider_context_order = ("contract-fixtures", "format-lint", "unit", "security", "msrv")
+    provider_order_protection["required_status_checks"]["contexts"] = list(provider_context_order)
+    checks_by_context = {
+        item["context"]: item for item in provider_order_protection["required_status_checks"]["checks"]
+    }
+    provider_order_protection["required_status_checks"]["checks"] = [
+        checks_by_context[context] for context in provider_context_order
+    ]
+    replace_json_response(
+        provider_order_protection_map["control"],
+        "branch-protection",
+        provider_order_protection,
+    )
+    validate_package_response_semantics(provider_order_protection_map, semantic_root)
     expect_reversed_response_array_failure(
         "control",
         "workflow-blobs",
@@ -4534,20 +4632,12 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     reversed_labels = response_value(reversed_labels_map["metadata"], "pull-metadata")
     reversed_labels["data"]["repository"]["pullRequest"]["labels"]["nodes"].reverse()
     replace_json_response(reversed_labels_map["metadata"], "pull-metadata", reversed_labels)
-    expect_failure_message(
-        lambda: validate_package_response_semantics(reversed_labels_map, semantic_root),
-        "pull-metadata.labels.nodes must be in stable canonical order",
-        "reversed GraphQL labels",
-    )
+    validate_package_response_semantics(reversed_labels_map, semantic_root)
     reversed_assignees_map = json.loads(json.dumps(ordered_metadata_map))
     reversed_assignees = response_value(reversed_assignees_map["metadata"], "pull-metadata")
     reversed_assignees["data"]["repository"]["pullRequest"]["assignees"]["nodes"].reverse()
     replace_json_response(reversed_assignees_map["metadata"], "pull-metadata", reversed_assignees)
-    expect_failure_message(
-        lambda: validate_package_response_semantics(reversed_assignees_map, semantic_root),
-        "pull-metadata.assignees.nodes must be in stable canonical order",
-        "reversed GraphQL assignees",
-    )
+    validate_package_response_semantics(reversed_assignees_map, semantic_root)
     duplicate_label_id_map = json.loads(json.dumps(ordered_metadata_map))
     duplicate_label_ids = response_value(duplicate_label_id_map["metadata"], "pull-metadata")
     duplicate_label_nodes = duplicate_label_ids["data"]["repository"]["pullRequest"]["labels"]["nodes"]
@@ -4846,38 +4936,23 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         {"issue-comments": [issue_comment_fixture, second_issue_comment], "review-threads": ordered_threads},
     )
     validate_package_response_semantics(ordered_human_map, semantic_root)
-    for response_label, expected_message, test_label in (
-        ("github-reviews", "github-reviews must be in stable canonical order", "reversed GitHub reviews"),
-        ("issue-comments", "issue-comments must be in stable canonical order", "reversed issue comments"),
-    ):
+    for response_label in ("github-reviews", "issue-comments"):
         component = "review" if response_label == "github-reviews" else "discussion"
         reversed_human_map = json.loads(json.dumps(ordered_human_map))
         reversed_values = response_value(reversed_human_map[component], response_label)
         reversed_values.reverse()
         replace_json_response(reversed_human_map[component], response_label, reversed_values)
-        expect_failure_message(
-            lambda candidate_map=reversed_human_map: validate_package_response_semantics(candidate_map, semantic_root),
-            expected_message,
-            test_label,
-        )
+        validate_package_response_semantics(reversed_human_map, semantic_root)
     reversed_threads_map = json.loads(json.dumps(ordered_human_map))
     reversed_threads = response_value(reversed_threads_map["discussion"], "review-threads")
     reversed_threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"].reverse()
     replace_json_response(reversed_threads_map["discussion"], "review-threads", reversed_threads)
-    expect_failure_message(
-        lambda: validate_package_response_semantics(reversed_threads_map, semantic_root),
-        "reviewThreads.nodes must be in stable canonical order",
-        "reversed review threads",
-    )
+    validate_package_response_semantics(reversed_threads_map, semantic_root)
     reversed_thread_comments_map = json.loads(json.dumps(ordered_human_map))
     reversed_thread_comments = response_value(reversed_thread_comments_map["discussion"], "review-threads")
     reversed_thread_comments["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"].reverse()
     replace_json_response(reversed_thread_comments_map["discussion"], "review-threads", reversed_thread_comments)
-    expect_failure_message(
-        lambda: validate_package_response_semantics(reversed_thread_comments_map, semantic_root),
-        "reviewThreads.nodes[0].comments.nodes must be in stable canonical order",
-        "reversed review thread comments",
-    )
+    validate_package_response_semantics(reversed_thread_comments_map, semantic_root)
     validate_evidence_object(github_review_map["review"])
     validate_evidence_object(github_review_map["discussion"])
     github_review_sidecar = response_item(github_review_map["review"], "github-reviews")["human_body_hashes"]
@@ -5263,10 +5338,15 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     reversed_rulesets = response_value(reversed_rulesets_map["control"], "rulesets")
     reversed_rulesets.reverse()
     replace_json_response(reversed_rulesets_map["control"], "rulesets", reversed_rulesets)
+    validate_package_response_semantics(reversed_rulesets_map, semantic_root)
+    duplicate_rulesets_map = json.loads(json.dumps(ordered_rulesets_map))
+    duplicate_rulesets = response_value(duplicate_rulesets_map["control"], "rulesets")
+    duplicate_rulesets[1]["id"] = duplicate_rulesets[0]["id"]
+    replace_json_response(duplicate_rulesets_map["control"], "rulesets", duplicate_rulesets)
     expect_failure_message(
-        lambda: validate_package_response_semantics(reversed_rulesets_map, semantic_root),
-        "ruleset ids must be unique and sorted",
-        "reversed rulesets",
+        lambda: validate_package_response_semantics(duplicate_rulesets_map, semantic_root),
+        "rulesets contains a duplicate stable unique key",
+        "duplicate ruleset id",
     )
     for policy_field, policy_value in (
         ("conditions", {"ref_name": {"include": ["refs/heads/main"], "exclude": []}}),
@@ -5898,7 +5978,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "manifest component order",
     )
     package_fixture = {
-        "schema": "gvn-evidence-package-v1",
+        "schema": "gvn-evidence-package-v2",
         "phase": "stable-window-start",
         "pre_endpoint_bundles": pre_bundles,
         "snapshot_endpoint_bundles": stable_bundles,
@@ -5918,11 +5998,51 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "activation_binding": None,
     }
     validate_evidence_object(package_fixture)
+    reordered_publication_pre = {
+        bundle["component"]: json.loads(json.dumps(bundle)) for bundle in pre_bundles
+    }
+    reordered_publication_snapshot = {
+        bundle["component"]: json.loads(json.dumps(bundle)) for bundle in stable_bundles
+    }
+    preexisting_comment = json.loads(json.dumps(issue_comment_fixture))
+    replace_json_response(
+        reordered_publication_pre["discussion"],
+        "issue-comments",
+        [preexisting_comment],
+    )
+    replace_json_response(
+        reordered_publication_snapshot["discussion"],
+        "issue-comments",
+        [attestation_comment, preexisting_comment],
+    )
+    reordered_pre_pull = response_value(reordered_publication_pre["pr"], "pull")
+    reordered_pre_pull["comments"] = 1
+    replace_json_response(reordered_publication_pre["pr"], "pull", reordered_pre_pull)
+    reordered_snapshot_pull = response_value(reordered_publication_snapshot["pr"], "pull")
+    reordered_snapshot_pull["comments"] = 2
+    replace_json_response(reordered_publication_snapshot["pr"], "pull", reordered_snapshot_pull)
+    reordered_delta = {**package_fixture["publication_delta"], "pull_comments_before": 1, "pull_comments_after": 2}
+    expect_failure_message(
+        lambda: validate_publication_delta_v1(
+            reordered_delta,
+            reordered_publication_pre,
+            reordered_publication_snapshot,
+            attestation_fixture,
+            "2026-08-30T00:00:00Z",
+            "2026-08-30T00:00:01Z",
+        ),
+        "publication must append exactly the attestation comment",
+        "publication delta rejects reordered raw issue-comment sequence",
+    )
+    expect_failure(
+        lambda: validate_evidence_object({**package_fixture, "schema": "gvn-evidence-package-v1"}),
+        "retired evidence package v1",
+    )
     scan_evidence_secrets(package_fixture)
     alternate_bootstrap_package = json.loads(json.dumps(package_fixture, ensure_ascii=False))
     alternate_bootstrap_package["pre_attestation"]["base_sha"] = "d" * 40
     expect_failure_message(
-        lambda: validate_evidence_package_v1(alternate_bootstrap_package),
+        lambda: validate_evidence_package_v2(alternate_bootstrap_package),
         "governance bootstrap base must equal frozen source commit",
         "bootstrap package alternate source base",
     )
@@ -6066,6 +6186,22 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     end_package_fixture["manifest"]["phase"] = "stable-window-end"
     end_package_fixture["manifest"]["snapshot_cutoff_utc"] = "2026-08-30T00:10:01Z"
     validate_evidence_sequence([package_fixture, end_package_fixture])
+    reordered_end_package = json.loads(json.dumps(end_package_fixture, ensure_ascii=False))
+    reordered_end_checks = next(
+        bundle for bundle in reordered_end_package["snapshot_endpoint_bundles"] if bundle["component"] == "checks"
+    )
+    reordered_end_check_response = response_value(reordered_end_checks, "check-runs")
+    reordered_end_check_response["check_runs"].reverse()
+    replace_json_response(reordered_end_checks, "check-runs", reordered_end_check_response)
+    reordered_end_checks_digest = hashlib.sha256(canonical_json_v1(reordered_end_checks)).hexdigest()
+    next(
+        item for item in reordered_end_package["manifest"]["component_digests"] if item["name"] == "checks"
+    )["endpoint_bundle_sha256"] = reordered_end_checks_digest
+    expect_failure_message(
+        lambda: validate_evidence_object(reordered_end_package),
+        "publication changed forbidden component: checks",
+        "stable-window package rejects raw provider-order drift",
+    )
     expect_failure(
         lambda: validate_evidence_sequence([end_package_fixture, package_fixture]),
         "evidence phase reorder",
@@ -6169,17 +6305,13 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     )
     reversed_post_checks_values = json.loads(json.dumps(merge_fixture_values))
     reversed_post_checks_values["post-merge-checks"]["check_runs"].reverse()
-    expect_failure_message(
-        lambda: validate_merge_response_semantics(
-            sample_bundle("merge", reversed_post_checks_values),
-            semantic_root,
-            "d" * 40,
-            OWNER_GITHUB_ID,
-            [path.as_posix() for path in BOOTSTRAP_PATHS],
-            "2026-08-30T00:10:02Z",
-        ),
-        "post-merge-checks.check_runs must be in stable canonical order",
-        "reversed post-merge checks",
+    validate_merge_response_semantics(
+        sample_bundle("merge", reversed_post_checks_values),
+        semantic_root,
+        "d" * 40,
+        OWNER_GITHUB_ID,
+        [path.as_posix() for path in BOOTSTRAP_PATHS],
+        "2026-08-30T00:10:02Z",
     )
     duplicate_post_checks_values = json.loads(json.dumps(merge_fixture_values))
     duplicate_post_checks_values["post-merge-checks"]["check_runs"][1]["id"] = (
@@ -6436,7 +6568,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         for component in STABLE_COMPONENTS
     ]
     outer_start_package = {
-        "schema": "gvn-evidence-package-v1",
+        "schema": "gvn-evidence-package-v2",
         "phase": "stable-window-start",
         "pre_endpoint_bundles": outer_pre_bundles,
         "snapshot_endpoint_bundles": outer_snapshot_bundles,
@@ -6766,7 +6898,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     expect_failure(lambda: validate_evidence_object(error_status_bundle), "merge response HTTP conflict")
     expect_failure(lambda: validate_evidence_sequence([post_package_fixture]), "standalone post-merge package")
     pre_package_fixture = {
-        "schema": "gvn-evidence-package-v1",
+        "schema": "gvn-evidence-package-v2",
         "phase": "pre-attestation",
         "pre_endpoint_bundles": pre_bundles,
         "snapshot_endpoint_bundles": [],
@@ -7547,7 +7679,7 @@ def main() -> int:
     parser.add_argument("--base-ref", help="exact PR base ref; required with bootstrap/activation --base-sha")
     parser.add_argument("--head-sha", help="exact PR candidate head SHA; required with explicit CLI PR context")
     parser.add_argument("--pr-number", type=int, default=0, help="current PR number")
-    parser.add_argument("--evidence-json", type=Path, action="append", default=[], help="restricted 0600 /tmp gvn-evidence-package-v1 JSON; repeat for start/end/post sequence")
+    parser.add_argument("--evidence-json", type=Path, action="append", default=[], help="restricted 0600 /tmp gvn-evidence-package-v2 JSON; repeat for start/end/post sequence")
     parser.add_argument("--require-merge-ready", action="store_true", help="require exactly a complete stable-window start/end evidence sequence")
     parser.add_argument("--self-test", action="store_true", help="also execute deterministic negative tests")
     arguments = parser.parse_args()
