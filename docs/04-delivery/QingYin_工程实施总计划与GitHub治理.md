@@ -67,6 +67,9 @@ main (受保护，只接受 PR)
 
 Finding 使用 `Finding-P0/P1/P2` 和 `Open / Accepted-Residual / Resolved / Deferred-P2` 严格状态机：P0 永不例外；P1 默认阻塞，只能在精确范围、缓解、回滚、证据、有效期和失效条件齐全时由 owner 接受；P2 必须解决或带明确处置延期。未知/重复 finding、缺字段 residual 或无处置 P2 均阻塞。P1 不能覆盖 secret、租户隔离、客户数据、不可恢复损坏、生产凭据/流量或外部人工门。
 
+
+治理激活后的普通 PR 稳定窗口使用 DEC 的 `gvn-live-verification-v1` 入口：完整 start/end 证据先校验，再运行 `--live-merge-ready` 在当前进程直接读取 GitHub、Actions job/log 与执行 commit 并观察至少 600 秒。离线 ordinary `--require-merge-ready` 继续拒绝。现场结果不保存为可重放 receipt，也不替代临门保护核验、owner 声明或生产门；HTTP、权限、分页、到期、漂移或取消失败时保持未通过。固定 residual 必须逐项存在并有合法接受或完整修复证据，声明中的 accepted 集合由 ledger 派生。2026-11-14 的新期限仍是未接受提案，旧候选证据不得复用。
+
 ## 5. GitHub 保护策略
 
 GitHub 仓库建立后，为 `main` 配置以下规则：

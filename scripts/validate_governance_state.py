@@ -11,6 +11,13 @@ from dataclasses import dataclass
 import hashlib
 import io
 import json
+import email.utils
+import email.message
+import ssl
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import os
 import re
 import stat
@@ -24,7 +31,7 @@ import unicodedata
 from unittest.mock import patch
 import zipfile
 import zlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, NoReturn
 
@@ -86,12 +93,12 @@ ONE_TIME_RESIDUAL_IDS = ("GVN-P1-005",)
 RESIDUAL_IDS = (*COMMON_RESIDUAL_IDS, *ONE_TIME_RESIDUAL_IDS)
 ONE_TIME_TARGET_TYPES = ("governance-bootstrap", "activation-evidence")
 FRESHNESS_UNVERIFIED_MARKER = "stable-window capture-time freshness (GVN-P1-005)"
-RESIDUAL_VALID_UNTIL = "2026-09-29T00:00:00Z"
+RESIDUAL_VALID_UNTIL = "2026-11-14T00:00:00Z"
 RESIDUAL_SECTION_SHA256 = {
-    "GVN-P1-001": "7d3671ecdf6cce7157f4b9e92f2ff8cb7165144002d48ab348410776164c658d",
-    "GVN-P1-002": "d58448eeafaff19c3e4ef0d225ae6278e3e2b16cb12a928336f6c7bd03cb3ef3",
-    "GVN-P1-003": "c9b761b32d82dece4a013417b309bffb8a59db59cd76aff6e5f60f45a34ad9aa",
-    "GVN-P1-005": "c9b0855ee9915d3c3a62e598ca219d54d2814cdea69ce3b71be669eabbaec5ba",
+    "GVN-P1-001": "09039a5a736f1f2197dd7cd80d0d816b91eb082654f2506963d683c547064cd3",
+    "GVN-P1-002": "ceb675b0bed19ca04fc84920cd348a9ca3f466f186d844a3421d13aaeac3ec34",
+    "GVN-P1-003": "783a48b30d81c6cf5bdf97094ed306f2278e91c8f52c6a96aada14fe524b9fc2",
+    "GVN-P1-005": "d8bbc2edc58f2325258159c223f28efaeb873b8588e390424b7101fdb9c68ea8",
 }
 RESIDUAL_FIELD_ORDER = {
     "GVN-P1-001": ("status", "accepted_by", "reason", "scope", "mitigation", "rollback", "fallback", "valid_until", "invalidators", "review_date", "evidence"),
@@ -2751,6 +2758,29 @@ def require_merge_ready_freshness(target_type: str) -> None:
     )
 
 
+def resolution_patch_digest(finding_id: str, root: dict[str, Any], paths_bundle: dict[str, Any] | None, repair_paths: Any) -> str:
+    """Bind the finding to immutable candidate changes, never an arbitrary hash string."""
+    require(paths_bundle is not None, "Resolved finding requires candidate paths evidence")
+    paths = require_sorted_unique_strings(repair_paths, "Resolved finding repair_paths")
+    require(paths, "Resolved finding repair_paths cannot be empty")
+    candidate = response_value(paths_bundle, "candidate-commit")
+    require(candidate.get("commit") == root["candidate_head"] and candidate.get("tree") == root["candidate_tree"], "Resolved patch candidate paths mismatch")
+    files = response_value(paths_bundle, "pull-files")
+    selected: list[dict[str, Any]] = []
+    for path in paths:
+        matches = [item for item in files if item.get("filename") == path]
+        require(len(matches) == 1, "Resolved repair path missing or duplicated in candidate diff")
+        entry = matches[0]
+        require(isinstance(entry.get("patch"), str) and entry["patch"].strip(), "Resolved repair path lacks an upstream patch preimage")
+        require(entry.get("changes", 0) > 0, "Resolved repair path has no candidate changes")
+        selected.append(entry)
+    return hashlib.sha256(canonical_json_v1({
+        "schema": "gvn-resolution-patch-v1", "finding_id": finding_id,
+        "base_sha": root["base_sha"], "candidate_head": root["candidate_head"],
+        "candidate_tree": root["candidate_tree"], "repair_files": selected,
+    })).hexdigest()
+
+
 def validate_finding_ledger(
     bundle: dict[str, Any],
     review_bundle: dict[str, Any],
@@ -2758,6 +2788,7 @@ def validate_finding_ledger(
     root: dict[str, Any],
     attestation: dict[str, Any] | None,
     target_type: str,
+    paths_bundle: dict[str, Any] | None = None,
 ) -> None:
     require(target_type in (*ONE_TIME_TARGET_TYPES, "ordinary"), "evidence target type invalid")
     candidate_head = root["candidate_head"]
@@ -2804,6 +2835,8 @@ def validate_finding_ledger(
             require(isinstance(finding[field], str), f"finding[{index}].{field} must be a string")
         for field in ("owner", "scope", "reason", "mitigation", "rollback", "disposition"):
             require(finding[field].strip() == finding[field] and finding[field], f"finding[{index}].{field} must be non-empty and trimmed")
+        if finding["id"] in RESIDUAL_IDS:
+            require(finding["owner"] == "ZhangIvan" and finding["scope"] == RESIDUAL_SCOPES[finding["id"]], "fixed residual owner/scope drifted")
         if finding["id"] not in RESIDUAL_IDS:
             require(finding["scope"].startswith("repository-only: "), f"finding[{index}] scope must be explicitly repository-only")
             normalized_scope = finding["scope"].removeprefix("repository-only: ").casefold()
@@ -2929,16 +2962,17 @@ def validate_finding_ledger(
         elif finding["status"] == "Resolved":
             resolution = require_exact_object(
                 finding["evidence"],
-                ("schema", "from_status", "transition", "candidate_head", "resolved_at", "patch_sha256", "verification_reports"),
+                ("schema", "from_status", "transition", "candidate_head", "resolved_at", "patch_sha256", "repair_paths", "verification_reports"),
                 f"Resolved finding evidence: {finding['id']}",
             )
-            require(resolution["schema"] == "gvn-finding-resolution-v1", f"Resolved finding schema mismatch: {finding['id']}")
+            require(resolution["schema"] == "gvn-finding-resolution-v2", f"Resolved finding schema mismatch: {finding['id']}")
             require(resolution["from_status"] == "Open" and resolution["transition"] == "Open->Resolved", f"Resolved finding transition invalid: {finding['id']}")
             require(resolution["candidate_head"] == candidate_head, f"Resolved finding candidate mismatch: {finding['id']}")
             require_utc_timestamp(resolution["resolved_at"], f"Resolved finding resolved_at: {finding['id']}")
             resolution_time = datetime.strptime(resolution["resolved_at"], "%Y-%m-%dT%H:%M:%SZ")
             require(latest_review_completion <= resolution_time <= cutoff, f"Resolved transition is outside the fresh-review/cutoff interval: {finding['id']}")
             require_sha256(resolution["patch_sha256"], f"Resolved finding patch_sha256: {finding['id']}")
+            require(resolution["patch_sha256"] == resolution_patch_digest(finding["id"], root, paths_bundle, resolution["repair_paths"]), f"Resolved finding patch hash differs from candidate changes: {finding['id']}")
             require(isinstance(resolution["verification_reports"], list) and len(resolution["verification_reports"]) == 2, f"Resolved finding requires two fresh verifier reports: {finding['id']}")
             require(resolution["verification_reports"] == expected_verification_reports, f"Resolved finding verifier reports differ from fresh Agent reviews: {finding['id']}")
             require(finding["invalidators"], f"Resolved finding invalidators missing: {finding['id']}")
@@ -2964,7 +2998,9 @@ def validate_finding_ledger(
             require(deferral["verification_reports"] == expected_verification_reports, f"Deferred-P2 verifier reports differ from fresh Agent reviews: {finding['id']}")
         finding_ids.append(finding["id"])
     require(finding_ids == sorted(set(finding_ids), key=utf16_sort_key), "finding ledger ids must be unique and sorted")
-    require(tuple(accepted_residual_ids) == expected_residual_ids, "accepted residual set does not match the evidence target")
+    fixed_findings = {item["id"]: item for item in ledger["findings"] if item["id"] in expected_residual_ids}
+    require(tuple(sorted(fixed_findings, key=utf16_sort_key)) == expected_residual_ids, "fixed residual disposition set does not match the evidence target")
+    require(all(item["status"] in ("Accepted-Residual", "Resolved") for item in fixed_findings.values()), "fixed residual has no valid acceptance or resolution")
     if attestation is not None:
         require(attestation["finding_ids"] == finding_ids, "attestation finding_ids differ from finding ledger")
         require(attestation["accepted_residual_ids"] == accepted_residual_ids, "attestation accepted_residual_ids differ from finding ledger")
@@ -3020,7 +3056,7 @@ def validate_evidence_package_v2(
     require(pre["component_digests"] == expected_pre_digests, "pre-attestation component digests do not match embedded bundles")
     validate_package_request_bindings(pre_bundle_map, pre["pr_number"], pre["candidate_head"], pre["candidate_tree"], None)
     validate_package_response_semantics(pre_bundle_map, pre, pre["snapshot_cutoff_utc"], target_type)
-    validate_finding_ledger(pre_bundle_map["finding"], pre_bundle_map["review"], pre["snapshot_cutoff_utc"], pre, None, target_type)
+    validate_finding_ledger(pre_bundle_map["finding"], pre_bundle_map["review"], pre["snapshot_cutoff_utc"], pre, None, target_type, pre_bundle_map["paths"])
 
     if package["phase"] == "pre-attestation":
         require(package["snapshot_endpoint_bundles"] == [], "pre-attestation package snapshot bundles must be empty")
@@ -3094,7 +3130,7 @@ def validate_evidence_package_v2(
         > datetime.strptime(pre["snapshot_cutoff_utc"], "%Y-%m-%dT%H:%M:%SZ"),
         "stable/post-merge snapshot cutoff must be later than pre-attestation cutoff",
     )
-    validate_finding_ledger(snapshot_bundle_map["finding"], snapshot_bundle_map["review"], manifest["snapshot_cutoff_utc"], pre, attestation, target_type)
+    validate_finding_ledger(snapshot_bundle_map["finding"], snapshot_bundle_map["review"], manifest["snapshot_cutoff_utc"], pre, attestation, target_type, snapshot_bundle_map["paths"])
     validate_publication_delta_v1(
         package["publication_delta"],
         pre_bundle_map,
@@ -3103,6 +3139,201 @@ def validate_evidence_package_v2(
         pre["snapshot_cutoff_utc"],
         manifest["snapshot_cutoff_utc"],
     )
+
+
+# Live verification is an execution path, never a field accepted from an evidence file.
+LIVE_POLL_SECONDS = 30
+LIVE_WINDOW_SECONDS = 600
+LIVE_HTTP_TIMEOUT_SECONDS = 20
+LIVE_BATCH_TIMEOUT_SECONDS = 180
+LIVE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+LIVE_MAX_TOTAL_BYTES = 256 * 1024 * 1024
+
+
+class RejectLiveRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> None:
+        return None
+
+
+class LiveGitHubReader:
+    """Read fixed HTTPS API requests; credentials and signed log URLs stay in memory."""
+
+    def __init__(self) -> None:
+        try:
+            result = subprocess.run(
+                ["gh", "auth", "token", "--hostname", "github.com"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            fail("live GitHub credential lookup failed")
+        require(result.returncode == 0 and 0 < len(result.stdout) <= 512, "live GitHub credential unavailable")
+        token = result.stdout.strip()
+        require(re.fullmatch(rb"[A-Za-z0-9_]+", token) is not None, "live GitHub credential format invalid")
+        self._token = token.decode("ascii")
+        self._opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+            RejectLiveRedirects(),
+        )
+        self.begin_batch()
+
+    def begin_batch(self) -> None:
+        self._deadline = time.monotonic() + LIVE_BATCH_TIMEOUT_SECONDS
+        self._total = 0
+
+    def _request(self, url: str, method: str, body: bytes | None, authenticated: bool) -> tuple[bytes, str]:
+        headers = {"User-Agent": "QingYin-governance-live", "Accept": "application/vnd.github+json"}
+        if authenticated:
+            headers["Authorization"] = "Bearer " + self._token
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        response = None
+        try:
+            remaining = self._deadline - time.monotonic()
+            require(remaining > 0, "live API batch timed out")
+            response = self._opener.open(request, timeout=min(LIVE_HTTP_TIMEOUT_SECONDS, remaining))
+            require(response.status == 200, "live API response was not HTTP 200")
+            require(not re.search(r'rel\s*=\s*["\']?next', response.headers.get("Link", ""), re.I), "live API pagination requires a new evidence schema")
+            length = response.headers.get("Content-Length")
+            if length is not None:
+                require(length.isdecimal() and len(length) < 12 and int(length) <= LIVE_MAX_RESPONSE_BYTES, "live response Content-Length exceeds limit")
+            server_date = email.utils.parsedate_to_datetime(response.headers.get("Date", ""))
+            require(server_date.tzinfo is not None, "live API Date lacks UTC offset")
+            require(abs((datetime.now(timezone.utc) - server_date).total_seconds()) <= 120, "live API/local UTC clocks disagree")
+            chunks: list[bytes] = []
+            size = 0
+            while True:
+                remaining = self._deadline - time.monotonic()
+                require(remaining > 0, "live API batch timed out")
+                chunk = response.read1(min(65536, LIVE_MAX_RESPONSE_BYTES - size + 1))
+                require(time.monotonic() <= self._deadline, "live API batch timed out while reading")
+                if not chunk:
+                    break
+                size += len(chunk)
+                self._total += len(chunk)
+                require(size <= LIVE_MAX_RESPONSE_BYTES and self._total <= LIVE_MAX_TOTAL_BYTES, "live response byte limit exceeded")
+                chunks.append(chunk)
+            return b"".join(chunks), response.headers.get_content_type()
+        except urllib.error.HTTPError as exc:
+            # Only job-log acquisition may inspect a redirect, with authorization stripped.
+            try:
+                if authenticated and method == "GET" and re.fullmatch(r"https://api\.github\.com/repos/ZhangIvan/QingYin/actions/jobs/[1-9][0-9]*/logs", url) and exc.code == 302:
+                    location = exc.headers.get("Location", "")
+                    require(location.startswith("https://") and re.search(r"[\x00-\x20\x7f]", location) is None, "live log redirect contains unsafe URL characters")
+                    parsed = urllib.parse.urlsplit(location)
+                    require(parsed.scheme == "https" and parsed.port in (None, 443) and parsed.username is None and parsed.password is None, "live log redirect is not safe HTTPS")
+                    require(re.fullmatch(r"[a-z0-9-]+\.blob\.core\.windows\.net", parsed.hostname or "") is not None and not parsed.fragment, "live log redirect authority unsupported")
+                    return self._request(location, "GET", None, False)
+                fail("live GitHub HTTP request failed")
+            finally:
+                exc.close()
+        except (urllib.error.URLError, OSError, ValueError):
+            fail("live GitHub transport or response validation failed")
+        finally:
+            if response is not None:
+                response.close()
+
+    def read(self, request: dict[str, Any]) -> tuple[bytes, str]:
+        validate_request_v1(request)
+        require(request["source"] == "github-api" and request["authority"] == "api.github.com", "live request source is not GitHub API")
+        method = request["method"]
+        path = request["path"]
+        require(re.fullmatch(r"/repos/ZhangIvan/QingYin/[A-Za-z0-9/_-]+|/repos/ZhangIvan/QingYin|/users/ZhangIvan|/graphql", path) is not None, "live request path outside repository scope")
+        if method == "POST":
+            require(path == "/graphql" and not request["query"], "live POST must use frozen read-only GraphQL")
+            payload = request["body"]
+            require(isinstance(payload, dict) and set(payload) == {"query", "variables"} and payload.get("query") in (PULL_METADATA_QUERY, REVIEW_THREADS_QUERY), "live GraphQL query is not frozen read-only text")
+            variables = payload["variables"]
+            require(isinstance(variables, dict) and set(variables) == {"owner", "name", "number"} and variables.get("owner") == "ZhangIvan" and variables.get("name") == "QingYin", "live GraphQL variables outside repository scope")
+            require_positive_int(variables.get("number"), "live GraphQL PR number")
+        else:
+            require(method == "GET" and path != "/graphql" and not path.endswith("/merge"), "live request is not read-only")
+        query = urllib.parse.urlencode(request["query"])
+        url = "https://api.github.com" + path + ("?" + query if query else "")
+        return self._request(url, method, None if request["body"] is None else canonical_json_v1(request["body"]), True)
+
+    def json_at(self, path: str) -> dict[str, Any]:
+        data, media = self.read({
+            "schema": "gvn-request-v1", "source": "github-api", "method": "GET",
+            "authority": "api.github.com", "path": path, "query": [], "body": None,
+        })
+        require(media == "application/json", "live auxiliary response is not JSON")
+        value = parse_json_strict(validate_utf8_bytes(data, "live auxiliary response"))
+        require(isinstance(value, dict), "live auxiliary response is not an object")
+        return value
+
+
+def require_live_residual_validity(bundles: dict[str, dict[str, Any]]) -> None:
+    now = datetime.now(timezone.utc)
+    for finding in response_value(bundles["finding"], "finding-ledger")["findings"]:
+        if finding["status"] == "Accepted-Residual":
+            expiry = datetime.strptime(finding["valid_until"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            require(now < expiry, "live accepted residual has expired; new owner-bound decision required")
+
+
+def verify_live_snapshot(reader: LiveGitHubReader, bundles: dict[str, dict[str, Any]], context: CurrentPRContext) -> None:
+    """Re-read API originals and the remote inputs underlying derived job/log objects."""
+
+    require_live_residual_validity(bundles)
+    reader.begin_batch()
+    main = reader.json_at("/repos/ZhangIvan/QingYin/git/ref/heads/main")
+    require(main.get("ref") == "refs/heads/main" and main.get("object", {}).get("type") == "commit" and main["object"].get("sha") == context.base_sha, "live main/base drifted")
+    for bundle in bundles.values():
+        for response in bundle["responses"]:
+            if response["request"]["source"] != "github-api":
+                continue
+            body, media = reader.read(response["request"])
+            require(media == response["response_media_type"], "live response media type drifted")
+            require(body == base64.b64decode(response["response_body_base64"], validate=True), "live API response bytes drifted")
+    candidate = reader.json_at(f"/repos/ZhangIvan/QingYin/git/commits/{context.candidate_head}")
+    require(candidate.get("sha") == context.candidate_head and candidate.get("tree", {}).get("sha") == context.candidate_tree, "live candidate commit/tree mismatch")
+    logs = workflow_log_records(bundles["checks"])
+    executions = response_value(bundles["runner"], "runner-provenance")["executions"]
+    for execution in executions:
+        job = reader.json_at(f"/repos/ZhangIvan/QingYin/actions/jobs/{execution['job_id']}")
+        require(job.get("id") == execution["job_id"] and job.get("run_id") == execution["run_id"], "live job identity mismatch")
+        require(job.get("name") == execution["context"] and job.get("status") == "completed" and job.get("conclusion") == "success", "live job state drifted")
+        require(job.get("started_at") == execution["started_at"] and job.get("completed_at") == execution["completed_at"], "live job timing drifted")
+        require(job.get("check_run_url") == f"https://api.github.com/repos/ZhangIvan/QingYin/check-runs/{execution['check_run_id']}", "live job/check binding mismatch")
+        request = {"schema": "gvn-request-v1", "source": "github-api", "method": "GET", "authority": "api.github.com",
+                   "path": f"/repos/ZhangIvan/QingYin/actions/jobs/{execution['job_id']}/logs", "query": [], "body": None}
+        log, media = reader.read(request)
+        require(media in ("text/plain", "application/octet-stream"), "live job log media type invalid")
+        require(log == logs[execution["job_id"]][1], "live job log bytes drifted")
+        remote = reader.json_at(f"/repos/ZhangIvan/QingYin/git/commits/{execution['execution_sha']}")
+        require(remote.get("sha") == execution["execution_sha"] and remote.get("tree", {}).get("sha") == execution["execution_tree"], "live execution commit/tree mismatch")
+        require([p.get("sha") for p in remote.get("parents", [])] == execution["ordered_parents"], "live execution parents mismatch")
+    # Re-check main after the batch too; no atomic base CAS is claimed.
+    main = reader.json_at("/repos/ZhangIvan/QingYin/git/ref/heads/main")
+    require(main.get("ref") == "refs/heads/main" and main.get("object", {}).get("type") == "commit" and main["object"].get("sha") == context.base_sha, "live main changed during acquisition")
+    require_live_residual_validity(bundles)
+
+
+def validate_live_merge_ready(packages: list[dict[str, Any]], current_context: CurrentPRContext) -> None:
+    """Only this invocation observes time; no serialized receipt is issued or accepted."""
+
+    validate_evidence_sequence(packages, current_context=current_context)
+    require(tuple(p["phase"] for p in packages) == ("stable-window-start", "stable-window-end"), "live merge-ready requires exact start/end packages")
+    require(derive_evidence_target_type(packages[0], packages[0]["pre_attestation"]) == "ordinary", "live merge-ready is for ordinary PRs only")
+    bundles = {b["component"]: b for b in packages[-1]["snapshot_endpoint_bundles"]}
+    require_live_residual_validity(bundles)
+    reader = LiveGitHubReader()
+    try:
+        verify_live_snapshot(reader, bundles, current_context)
+        start = time.monotonic()
+        deadline = start + LIVE_WINDOW_SECONDS
+        while time.monotonic() < deadline:
+            require_live_residual_validity(bundles)
+            time.sleep(min(LIVE_POLL_SECONDS, max(0, deadline - time.monotonic())))
+            verify_live_snapshot(reader, bundles, current_context)
+        # A suspended/descheduled process may skip the polling loop; the end read is mandatory.
+        verify_live_snapshot(reader, bundles, current_context)
+        require(time.monotonic() - start >= LIVE_WINDOW_SECONDS, "live monotonic window was shortened")
+        require_live_residual_validity(bundles)
+    finally:
+        reader._token = ""
 
 
 def validate_evidence_sequence(
@@ -3582,10 +3813,10 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "oversized governance PR",
     )
     forged_expiry = dec.replace(
-        "- `valid_until`：`2026-09-29T00:00:00Z`。",
+        "- `valid_until`：`2026-11-14T00:00:00Z`。",
         "- `valid_until`：`2099-01-01T00:00:00Z`。",
         1,
-    ) + "\n- `valid_until`：`2026-09-29T00:00:00Z`。\n"
+    ) + "\n- `valid_until`：`2026-11-14T00:00:00Z`。\n"
     expect_failure(lambda: validate_source_binding(forged_expiry), "forged residual expiry plus duplicate")
     validate_first_parent_lineage_untouched("HEAD", "HEAD")
     expect_failure(
@@ -6928,7 +7159,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
     forged_delta["snapshot_endpoint_bundles"][0] = pre_bundles[0]
     expect_failure(lambda: validate_evidence_object(forged_delta), "publication delta missing pull mutation")
     expired_residual = json.loads(json.dumps(package_fixture, ensure_ascii=False))
-    expired_residual["manifest"]["snapshot_cutoff_utc"] = "2026-09-29T00:00:00Z"
+    expired_residual["manifest"]["snapshot_cutoff_utc"] = "2026-11-14T00:00:00Z"
     expect_failure(lambda: validate_evidence_object(expired_residual), "residual expiry at snapshot cutoff")
     missing_attested_finding = {**attestation_fixture, "finding_ids": ["GVN-P1-001"]}
     stable_bundle_map = {bundle["component"]: bundle for bundle in stable_bundles}
@@ -6967,7 +7198,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
             None,
             "governance-bootstrap",
         ),
-        "accepted residual set does not match the evidence target",
+        "fixed residual disposition set does not match the evidence target",
         "governance bootstrap missing GVN-P1-005",
     )
     for binding_field, wrong_value in (
@@ -7003,7 +7234,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
             None,
             "governance-bootstrap",
         ),
-        "Accepted-Residual scope mismatch: GVN-P1-005",
+        "fixed residual owner/scope drifted",
         "GVN-P1-005 scope expansion",
     )
     wrong_005_section_ledger = json.loads(json.dumps(finding_ledger, ensure_ascii=False))
@@ -7067,6 +7298,75 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         derive_evidence_target_type(activation_non_source_package, activation_non_source_root, "activation-evidence") == "activation-evidence",
         "activation evidence must allow a non-source base",
     )
+    # Fixed residuals may be resolved, but must never disappear from the ledger.
+    resolution_paths = json.loads(json.dumps(pre_bundle_map["paths"]))
+    resolution_files = response_value(resolution_paths, "pull-files")
+    repair_filename = VALIDATOR_PATH.as_posix()
+    next(file for file in resolution_files if file["filename"] == repair_filename)["patch"] = "@@ -1 +1 @@\n-old control\n+candidate repair\n"
+    replace_json_response(resolution_paths, "pull-files", resolution_files)
+    resolved_fixed_ledger = json.loads(json.dumps(finding_ledger, ensure_ascii=False))
+    for finding in resolved_fixed_ledger["findings"]:
+        finding["status"] = "Resolved"
+        finding["valid_until"] = None
+        finding["evidence"] = {
+            "schema": "gvn-finding-resolution-v2",
+            "from_status": "Open", "transition": "Open->Resolved",
+            "candidate_head": semantic_root["candidate_head"],
+            "resolved_at": "2026-08-29T23:46:00Z", "patch_sha256": resolution_patch_digest(finding["id"], semantic_root, resolution_paths, [repair_filename]), "repair_paths": [repair_filename],
+            "verification_reports": verification_report_fixture,
+        }
+    validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": resolved_fixed_ledger}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, {**attestation_fixture, "accepted_residual_ids": []}, "governance-bootstrap", resolution_paths,
+    )
+    for field, invalid_value in (("patch_sha256", "0" * 64), ("repair_paths", ["not-in-candidate.py"]), ("repair_paths", []), ("schema", "gvn-finding-resolution-v1")):
+        forged_patch_ledger = json.loads(json.dumps(resolved_fixed_ledger))
+        forged_patch_ledger["findings"][0]["evidence"][field] = invalid_value
+        expect_failure(lambda: validate_finding_ledger(
+            sample_bundle("finding", {"finding-ledger": forged_patch_ledger}),
+            stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+            semantic_root, None, "governance-bootstrap", resolution_paths,
+        ), "fixed residual resolution without actual candidate patch")
+    expect_failure(lambda: validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": resolved_fixed_ledger}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, None, "governance-bootstrap",
+    ), "fixed residual resolution without paths preimage")
+    wrong_resolved_scope = json.loads(json.dumps(resolved_fixed_ledger))
+    wrong_resolved_scope["findings"][0]["scope"] = "production authorization"
+    expect_failure(lambda: validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": wrong_resolved_scope}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, None, "governance-bootstrap", resolution_paths,
+    ), "fixed Resolved residual scope expansion")
+    mixed_fixed_ledger = json.loads(json.dumps(finding_ledger, ensure_ascii=False))
+    mixed_fixed_ledger["findings"][0] = resolved_fixed_ledger["findings"][0]
+    validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": mixed_fixed_ledger}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, {**attestation_fixture, "accepted_residual_ids": list(RESIDUAL_IDS[1:])}, "governance-bootstrap", resolution_paths,
+    )
+    missing_fixed_ledger = json.loads(json.dumps(resolved_fixed_ledger))
+    missing_fixed_ledger["findings"].pop()
+    expect_failure(lambda: validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": missing_fixed_ledger}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, None, "governance-bootstrap", resolution_paths,
+    ), "resolved fixed residual missing from ledger")
+    forged_resolution = json.loads(json.dumps(resolved_fixed_ledger))
+    forged_resolution["findings"][0]["evidence"]["candidate_head"] = "0" * 40
+    expect_failure(lambda: validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": forged_resolution}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, None, "governance-bootstrap", resolution_paths,
+    ), "resolved fixed residual bound to wrong candidate")
+    expect_failure(lambda: validate_finding_ledger(
+        sample_bundle("finding", {"finding-ledger": resolved_fixed_ledger}),
+        stable_bundle_map["review"], stable_fixture["snapshot_cutoff_utc"],
+        semantic_root, attestation_fixture, "governance-bootstrap", resolution_paths,
+    ), "resolved residual falsely attested as accepted")
+
     ordinary_resolved_005_ledger = json.loads(json.dumps(finding_ledger, ensure_ascii=False))
     ordinary_resolved_005 = next(item for item in ordinary_resolved_005_ledger["findings"] if item["id"] == "GVN-P1-005")
     ordinary_resolved_005["status"] = "Resolved"
@@ -7530,6 +7830,173 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         _run_self_tests(active_dec, active_plan, active_index, exercise_active_input=False)
 
 
+def run_live_self_tests() -> None:
+    """No real credentials, network, or elapsed wall-clock wait in these negative tests."""
+    from unittest.mock import Mock
+
+    request = {"schema": "gvn-request-v1", "source": "github-api", "method": "GET", "authority": "api.github.com",
+               "path": "/repos/ZhangIvan/QingYin/pulls/17", "query": [], "body": None}
+    reader = LiveGitHubReader.__new__(LiveGitHubReader)
+    reader._token = "syntheticfixture"
+    reader._opener = Mock()
+    reader.begin_batch()
+    with patch.object(reader, "_request", return_value=(b"{}", "application/json")) as call:
+        reader.read(request)
+        require(call.call_args.args[:2] == ("https://api.github.com/repos/ZhangIvan/QingYin/pulls/17", "GET"), "live request target drifted")
+        for invalid in (
+            {**request, "authority": "localhost"},
+            {**request, "method": "PUT", "body": {}},
+            {**request, "path": "/repos/other/repo"},
+            {**request, "path": "/repos/ZhangIvan/QingYin/../other"},
+            {**request, "method": "POST", "path": "/graphql", "body": {"query": "mutation { deleteIssue }"}},
+        ):
+            expect_failure(lambda: reader.read(invalid), "unsafe live request")
+        reader.read({**request, "method": "POST", "path": "/graphql", "body": {"query": PULL_METADATA_QUERY, "variables": {"owner": "ZhangIvan", "name": "QingYin", "number": 17}}})
+
+    class Response(io.BytesIO):
+        status = 200
+        def __init__(self, content: bytes = b"{}", extra: dict[str, str] | None = None):
+            super().__init__(content)
+            self.headers = email.message.Message()
+            self.headers["Content-Type"] = "application/json"
+            self.headers["Date"] = email.utils.format_datetime(datetime.now(timezone.utc), usegmt=True)
+            for key, value in (extra or {}).items():
+                if key in self.headers:
+                    del self.headers[key]
+                self.headers[key] = value
+
+    response = Response()
+    reader._opener.open.return_value = response
+    reader.begin_batch()
+    require(reader.read(request) == (b"{}", "application/json") and response.closed, "live response acquisition/cleanup failed")
+    for headers in (
+        {"Link": '<https://api.github.com/next>; rel="next"'},
+        {"Content-Length": str(LIVE_MAX_RESPONSE_BYTES + 1)},
+        {"Date": "Thu, 01 Jan 1970 00:00:00 GMT"},
+    ):
+        response = Response(extra=headers)
+        reader._opener.open.return_value = response
+        reader.begin_batch()
+        expect_failure(lambda: reader.read(request), "incomplete/oversized/stale live HTTP response")
+        require(response.closed, "failed live response was not closed")
+    reader._opener.open.return_value = Response(b"12345")
+    reader.begin_batch()
+    with patch(__name__ + ".LIVE_MAX_RESPONSE_BYTES", 4):
+        expect_failure(lambda: reader.read(request), "streamed live payload byte limit")
+    reader._opener.open.side_effect = urllib.error.HTTPError("https://api.github.com/redacted", 403, "forbidden", {}, None)
+    reader.begin_batch()
+    expect_failure(lambda: reader.read(request), "live API permission failure")
+    reader._opener.open.side_effect = KeyboardInterrupt()
+    try:
+        reader.read(request)
+    except KeyboardInterrupt:
+        pass
+    else:
+        fail("live cancellation was swallowed")
+    reader._opener.open.side_effect = None
+    require(RejectLiveRedirects().redirect_request(None, None, 302, "", {}, "http://localhost") is None, "live redirect followed")
+    log_request = {**request, "path": "/repos/ZhangIvan/QingYin/actions/jobs/1/logs"}
+    log_url = "https://api.github.com" + log_request["path"]
+    redirect = urllib.error.HTTPError(log_url, 302, "redirect", {"Location": "https://fixture.blob.core.windows.net/log"}, None)
+    reader._opener.open.side_effect = [redirect, Response(b"log", {"Content-Type": "text/plain"})]
+    reader.begin_batch()
+    require(reader.read(log_request) == (b"log", "text/plain"), "live signed log download failed")
+    outgoing = reader._opener.open.call_args.args[0]
+    require(not outgoing.has_header("Authorization"), "live credential forwarded to signed log host")
+    for location in ("http://fixture.blob.core.windows.net/log", "https://evil.example/log", "https://@fixture.blob.core.windows.net/log", "https://fixture.blob.core.windows.net/log\n"):
+        reader._opener.open.side_effect = urllib.error.HTTPError(log_url, 302, "redirect", {"Location": location}, None)
+        reader.begin_batch()
+        expect_failure(lambda: reader.read(log_request), "unsafe live log redirect")
+    reader._opener.open.side_effect = None
+    reader._opener.open.return_value = Response(b"12345")
+    reader.begin_batch()
+    with patch(__name__ + ".LIVE_MAX_TOTAL_BYTES", 4):
+        expect_failure(lambda: reader.read(request), "live batch aggregate byte limit")
+    reader._deadline = 0
+    expect_failure(lambda: reader.read(request), "live batch deadline")
+
+
+    context = CurrentPRContext("a" * 40, "main", "b" * 40, "c" * 40, 17)
+    packages = [
+        {"phase": phase, "activation_binding": None, "pre_attestation": {"pr_number": 17}, "snapshot_endpoint_bundles": []}
+        for phase in ("stable-window-start", "stable-window-end")
+    ]
+    elapsed = [0.0]
+    def advance(seconds: float) -> None:
+        elapsed[0] += seconds
+    with patch(__name__ + ".validate_evidence_sequence") as structural, \
+         patch(__name__ + ".require_live_residual_validity"), \
+         patch(__name__ + ".LiveGitHubReader"), \
+         patch(__name__ + ".verify_live_snapshot") as snapshot, \
+         patch(__name__ + ".time.monotonic", side_effect=lambda: elapsed[0]), \
+         patch(__name__ + ".time.sleep", side_effect=advance):
+        validate_live_merge_ready(packages, context)
+        require(elapsed[0] >= 600 and snapshot.call_count >= 21, "live window did not poll for 600 real monotonic seconds")
+        structural.assert_called_once_with(packages, current_context=context)
+        snapshot.reset_mock()
+        with patch(__name__ + ".time.monotonic", side_effect=[0.0, 601.0, 601.0]):
+            validate_live_merge_ready(packages, context)
+        require(snapshot.call_count == 2, "live end snapshot skipped after process descheduling")
+        elapsed[0] = 0
+        snapshot.side_effect = GovernanceValidationError("fixture drift")
+        expect_failure(lambda: validate_live_merge_ready(packages, context), "live window drift")
+        structural.side_effect = GovernanceValidationError("invalid evidence")
+        expect_failure(lambda: validate_live_merge_ready(packages, context), "live unvalidated evidence")
+
+    # Exercise the real snapshot verifier, including remote inputs of derived artifacts.
+    execution = {"job_id": 1, "run_id": 2, "context": "unit", "check_run_id": 3,
+                 "started_at": "2026-08-30T00:00:00Z", "completed_at": "2026-08-30T00:01:00Z",
+                 "execution_sha": "d" * 40, "execution_tree": context.candidate_tree,
+                 "ordered_parents": [context.base_sha, context.candidate_head]}
+    fixture_bundles = {
+        "finding": {"responses": []}, "runner": {"responses": []}, "checks": {"responses": []},
+        "pr": {"responses": [{"request": request, "response_media_type": "application/json", "response_body_base64": base64.b64encode(b"{}").decode()}]},
+    }
+    main_path = "/repos/ZhangIvan/QingYin/git/ref/heads/main"
+    job_path = "/repos/ZhangIvan/QingYin/actions/jobs/1"
+    execution_path = "/repos/ZhangIvan/QingYin/git/commits/" + execution["execution_sha"]
+    responses = {
+        main_path: {"ref": "refs/heads/main", "object": {"type": "commit", "sha": context.base_sha}},
+        "/repos/ZhangIvan/QingYin/git/commits/" + context.candidate_head: {"sha": context.candidate_head, "tree": {"sha": context.candidate_tree}},
+        job_path: {"id": 1, "run_id": 2, "name": "unit", "status": "completed", "conclusion": "success",
+                   "started_at": execution["started_at"], "completed_at": execution["completed_at"],
+                   "check_run_url": "https://api.github.com/repos/ZhangIvan/QingYin/check-runs/3"},
+        execution_path: {"sha": execution["execution_sha"], "tree": {"sha": context.candidate_tree}, "parents": [{"sha": context.base_sha}, {"sha": context.candidate_head}]},
+    }
+    def fixture_value(bundle: Any, label: str) -> Any:
+        return {"executions": [execution]}
+    def fixture_read(req: dict[str, Any]) -> tuple[bytes, str]:
+        return (b"fixture log", "text/plain") if req["path"].endswith("/logs") else (b"{}", "application/json")
+    fixture_reader = Mock()
+    fixture_reader.json_at.side_effect = lambda path: responses[path]
+    fixture_reader.read.side_effect = fixture_read
+    with patch(__name__ + ".require_live_residual_validity"), \
+         patch(__name__ + ".response_value", side_effect=fixture_value), \
+         patch(__name__ + ".workflow_log_records", return_value={1: ("unused", b"fixture log")}):
+        verify_live_snapshot(fixture_reader, fixture_bundles, context)
+        for path, field, wrong in (
+            (main_path, "object", {"type": "commit", "sha": "0" * 40}),
+            (job_path, "run_id", 99), (job_path, "conclusion", "failure"),
+            (job_path, "check_run_url", "https://api.github.com/other"),
+            (execution_path, "parents", [{"sha": context.candidate_head}, {"sha": context.base_sha}]),
+        ):
+            original = responses[path][field]
+            responses[path][field] = wrong
+            expect_failure(lambda: verify_live_snapshot(fixture_reader, fixture_bundles, context), "live main/job/execution drift")
+            responses[path][field] = original
+        fixture_reader.read.side_effect = lambda req: (b"drift", "application/json")
+        expect_failure(lambda: verify_live_snapshot(fixture_reader, fixture_bundles, context), "live response body drift")
+        fixture_reader.read.side_effect = lambda req: (b"wrong log", "text/plain") if req["path"].endswith("/logs") else (b"{}", "application/json")
+        expect_failure(lambda: verify_live_snapshot(fixture_reader, fixture_bundles, context), "live derived log drift")
+
+    future = (datetime.now(timezone.utc).replace(year=2099)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    findings = {"findings": [{"status": "Accepted-Residual", "valid_until": future}]}
+    with patch(__name__ + ".response_value", return_value=findings):
+        require_live_residual_validity({"finding": {}})
+        findings["findings"][0]["valid_until"] = "1970-01-01T00:00:00Z"
+        expect_failure(lambda: require_live_residual_validity({"finding": {}}), "actual UTC expiry independent of package cutoff")
+
+
 def run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool = True) -> None:
     require(SOURCE_COMMIT == "27320e74f8cb920add83d6094fb81233dbb29636", "self-test source commit constant drifted")
     require_governance_bootstrap_base(REAL_SOURCE_COMMIT)
@@ -7548,6 +8015,7 @@ def run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool 
         "governance bootstrap must target base.ref=main",
         "governance bootstrap non-main base ref",
     )
+    run_live_self_tests()
     synthetic_source_commit = "a" * 40
     dec = dec.replace(
         f"- 基线：`main@{REAL_SOURCE_COMMIT}`",
@@ -7682,6 +8150,7 @@ def main() -> int:
     parser.add_argument("--evidence-json", type=Path, action="append", default=[], help="restricted 0600 /tmp gvn-evidence-package-v2 JSON; repeat for start/end/post sequence")
     parser.add_argument("--require-merge-ready", action="store_true", help="require exactly a complete stable-window start/end evidence sequence")
     parser.add_argument("--self-test", action="store_true", help="also execute deterministic negative tests")
+    parser.add_argument("--live-merge-ready", action="store_true", help="ordinary PR only: directly re-read fixed GitHub APIs for >=600 monotonic seconds; no offline freshness receipt")
     arguments = parser.parse_args()
     try:
         event_kind, event_base, event_base_ref, event_head, event_pr = event_context()
@@ -7706,6 +8175,8 @@ def main() -> int:
         base_ref = arguments.base_ref or event_base_ref
         candidate_head = arguments.head_sha or event_head
         pr_number = arguments.pr_number or event_pr
+        require(not (arguments.require_merge_ready and arguments.live_merge_ready), "offline and live merge-ready modes are mutually exclusive")
+        require(not arguments.live_merge_ready or (cli_context_present and arguments.evidence_json and event_kind != "push"), "live merge-ready requires explicit PR context and evidence outside push events")
         require(not arguments.require_merge_ready or arguments.evidence_json, "--require-merge-ready requires --evidence-json")
         governance_state = validate_repository(base_sha, base_ref, candidate_head, pr_number, arguments.self_test)
         if arguments.evidence_json:
@@ -7729,10 +8200,14 @@ def main() -> int:
                 authorized_target_type=authorized_target_type,
             )
             validate_activation_evidence_binding(evidence_packages, governance_state, pr_number, SOURCE_COMMIT)
+            if arguments.live_merge_ready:
+                require(governance_state["status"] == "ACTIVE" and authorized_target_type is None, "live ordinary merge-ready requires ACTIVE governance")
+                validate_live_merge_ready(evidence_packages, current_context)
         elif governance_state["status"] == "ACTIVE" and pr_number == governance_state["activation_pr"]:
             fail("activation transition requires the complete candidate-bound evidence sequence")
     except (
         GovernanceValidationError,
+        KeyboardInterrupt,
         OSError,
         subprocess.SubprocessError,
         ValueError,
@@ -7744,7 +8219,10 @@ def main() -> int:
     ) as exc:
         print(f"governance state validation failed: {exc}", file=sys.stderr)
         return 1
-    print("local governance structural validation passed; external GitHub evidence remains separately required")
+    if arguments.live_merge_ready:
+        print("live ordinary verification passed for this invocation; no reusable receipt or merge authorization is issued")
+    else:
+        print("local governance structural validation passed; external GitHub evidence remains separately required")
     return 0
 
 
