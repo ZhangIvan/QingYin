@@ -3250,7 +3250,7 @@ class LiveGitHubReader:
             require_positive_int(variables.get("number"), "live GraphQL PR number")
         else:
             require(method == "GET" and path != "/graphql" and not path.endswith("/merge"), "live request is not read-only")
-        query = urllib.parse.urlencode(request["query"])
+        query = urllib.parse.urlencode([(key, value) for key, value in request["query"]])
         url = "https://api.github.com" + path + ("?" + query if query else "")
         return self._request(url, method, None if request["body"] is None else canonical_json_v1(request["body"]), True)
 
@@ -7843,6 +7843,8 @@ def run_live_self_tests() -> None:
     with patch.object(reader, "_request", return_value=(b"{}", "application/json")) as call:
         reader.read(request)
         require(call.call_args.args[:2] == ("https://api.github.com/repos/ZhangIvan/QingYin/pulls/17", "GET"), "live request target drifted")
+        reader.read({**request, "query": [["page", "1"], ["per_page", "100"]]})
+        require(call.call_args.args[0] == "https://api.github.com/repos/ZhangIvan/QingYin/pulls/17?page=1&per_page=100", "live paginated query encoding failed")
         for invalid in (
             {**request, "authority": "localhost"},
             {**request, "method": "PUT", "body": {}},
