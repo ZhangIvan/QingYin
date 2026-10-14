@@ -2611,6 +2611,61 @@ def bundle_digest_map(values: Any, expected_components: tuple[str, ...], label: 
     return bundles, bundle_map, digest_map
 
 
+NATIVE_COMMENT_KEYS = frozenset((
+    "url", "html_url", "issue_url", "id", "node_id", "user", "created_at", "updated_at",
+    "author_association", "body", "reactions", "performed_via_github_app", "pin", "minimized",
+))
+NATIVE_COMMENT_USER_KEYS = frozenset((
+    "login", "id", "node_id", "avatar_url", "gravatar_id", "url", "html_url", "followers_url",
+    "following_url", "gists_url", "starred_url", "subscriptions_url", "organizations_url", "repos_url",
+    "events_url", "received_events_url", "type", "user_view_type", "site_admin",
+))
+NATIVE_COMMENT_REACTION_KEYS = frozenset(("url", "total_count", "+1", "-1", "laugh", "hooray", "confused", "heart", "rocket", "eyes"))
+
+
+def validate_issue_comment_endpoint_equivalence(list_comment: Any, single_comment: Any) -> None:
+    """Compare only the publication append across GitHub's two native endpoints.
+
+    Preserve both original response objects and hashes. The only representation
+    exceptions are a top-level absent/null pin and official avatar cache URLs.
+    Every other field, nested object and array remains exactly equal.
+    """
+    require(isinstance(list_comment, dict) and isinstance(single_comment, dict), "publication comments must be objects")
+    left, right = dict(list_comment), dict(single_comment)
+    for item in (left, right):
+        require(set(item).issubset(NATIVE_COMMENT_KEYS), "publication comment has unknown native fields")
+        require("pin" not in item or item["pin"] is None, "publication comment pin must be absent or null")
+        for nullable in ("minimized", "performed_via_github_app"):
+            require(nullable not in item or item[nullable] is None, f"publication comment {nullable} is outside the frozen owner profile")
+        if "reactions" in item:
+            require(isinstance(item["reactions"], dict) and set(item["reactions"]).issubset(NATIVE_COMMENT_REACTION_KEYS), "publication reactions have unknown native fields")
+            require(all(not isinstance(value, (dict, list)) for value in item["reactions"].values()), "publication reaction field has unexpected nested content")
+        require(all(not isinstance(value, (dict, list)) for key, value in item.items() if key not in ("user", "reactions")), "publication native scalar field has unexpected nested content")
+        item.pop("pin", None)
+    users = [item.get("user") for item in (left, right)]
+    for user in users:
+        require(isinstance(user, dict), "publication comment user must be an object")
+        require_positive_int(user.get("id"), "publication comment immutable user id")
+        require(set(user).issubset(NATIVE_COMMENT_USER_KEYS), "publication user has unknown native fields")
+        require(all(not isinstance(value, (dict, list)) for value in user.values()), "publication user field has unexpected nested content")
+    for item, user in zip((left, right), users, strict=True):
+        avatar = user.get("avatar_url")
+        require(
+            isinstance(avatar, str)
+            and re.fullmatch(
+                r"https://avatars\.githubusercontent\.com(?::443)?/u/"
+                + str(user["id"])
+                + r"\?(?:v=4|u=[0-9a-f]{40}&v=4)",
+                avatar,
+            ) is not None,
+            "publication comment avatar URL is outside the frozen native profile",
+        )
+        copied_user = dict(user)
+        copied_user.pop("avatar_url")
+        item["user"] = copied_user
+    require(left == right, "publication appended comment differs beyond native endpoint representations")
+
+
 def validate_publication_delta_v1(
     value: Any,
     pre_bundles: dict[str, dict[str, Any]],
@@ -2702,7 +2757,9 @@ def validate_publication_delta_v1(
         require_positive_int(item_id, f"snapshot comment[{comment_index}] id")
     require(len(set(pre_comment_ids)) == len(pre_comment_ids), "pre-snapshot comment ids are not unique")
     require(len(set(snapshot_comment_ids)) == len(snapshot_comment_ids), "snapshot comment ids are not unique")
-    require(snapshot_comments == [*pre_comments, comment], "publication must append exactly the attestation comment")
+    require(len(snapshot_comments) == len(pre_comments) + 1, "publication must append exactly one attestation comment")
+    require(snapshot_comments[:-1] == pre_comments, "publication changed existing comment prefix")
+    validate_issue_comment_endpoint_equivalence(snapshot_comments[-1], comment)
     require(comment.get("id") not in pre_comment_ids, "attestation comment id already existed before publication")
     require(comment.get("id") == delta["attestation_comment_id"], "publication delta comment id mismatch")
     require(comment.get("created_at") == delta["attestation_comment_created_at"], "publication delta comment created_at mismatch")
@@ -6131,7 +6188,8 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "id": 1,
         "node_id": "IC_kwDOAttestation1",
         "updated_at": "2026-08-30T00:00:01Z",
-        "user": {"id": OWNER_GITHUB_ID, "login": "ZhangIvan"},
+        "user": {"id": OWNER_GITHUB_ID, "login": "ZhangIvan",
+                 "avatar_url": f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}?v=4"},
     }
     attestation_bundle = sample_bundle(
         "attestation",
@@ -6252,6 +6310,33 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "activation_binding": None,
     }
     validate_evidence_object(package_fixture)
+    native_endpoint_package = json.loads(json.dumps(package_fixture))
+    native_bundle_map = {bundle["component"]: bundle for bundle in native_endpoint_package["snapshot_endpoint_bundles"]}
+    native_single_comment = json.loads(json.dumps(attestation_comment))
+    native_single_comment["pin"] = None
+    native_single_comment["user"]["avatar_url"] = f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}?u={'a' * 40}&v=4"
+    native_list_comment = json.loads(json.dumps(native_single_comment))
+    native_list_comment.pop("pin")
+    native_list_comment["user"]["avatar_url"] = f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}?v=4"
+    replace_json_response(native_bundle_map["attestation"], "attestation-comment", native_single_comment)
+    replace_json_response(native_bundle_map["discussion"], "issue-comments", [native_list_comment])
+    native_endpoint_package["manifest"]["component_digests"] = [
+        {"name": bundle["component"], "endpoint_bundle_sha256": hashlib.sha256(canonical_json_v1(bundle)).hexdigest()}
+        for bundle in native_endpoint_package["snapshot_endpoint_bundles"]
+    ]
+    native_bytes_before = canonical_json_v1(native_endpoint_package)
+    native_response_identity = [
+        (item["response_body_base64"], canonical_json_v1(item["request"]), item["request_canonical_sha256"],
+         item["response_body_sha256"], item["response_canonical_sha256"], canonical_json_v1(item["human_body_hashes"]))
+        for bundle in native_endpoint_package["snapshot_endpoint_bundles"] for item in bundle["responses"]
+    ]
+    validate_evidence_object(native_endpoint_package)
+    require(canonical_json_v1(native_endpoint_package) == native_bytes_before, "native v2 validation modified upstream responses or hashes")
+    require(native_response_identity == [
+        (item["response_body_base64"], canonical_json_v1(item["request"]), item["request_canonical_sha256"],
+         item["response_body_sha256"], item["response_canonical_sha256"], canonical_json_v1(item["human_body_hashes"]))
+        for bundle in native_endpoint_package["snapshot_endpoint_bundles"] for item in bundle["responses"]
+    ], "native v2 validation modified endpoint bytes, requests or hash sidecars")
     reordered_publication_pre = {
         bundle["component"]: json.loads(json.dumps(bundle)) for bundle in pre_bundles
     }
@@ -6285,9 +6370,31 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
             "2026-08-30T00:00:00Z",
             "2026-08-30T00:00:01Z",
         ),
-        "publication must append exactly the attestation comment",
+        "publication changed existing comment prefix",
         "publication delta rejects reordered raw issue-comment sequence",
     )
+    native_prefix_snapshot = json.loads(json.dumps(reordered_publication_snapshot))
+    replace_json_response(native_prefix_snapshot["discussion"], "issue-comments", [preexisting_comment, native_list_comment])
+    replace_json_response(native_prefix_snapshot["attestation"], "attestation-comment", native_single_comment)
+    validate_publication_delta_v1(
+        reordered_delta, reordered_publication_pre, native_prefix_snapshot, attestation_fixture,
+        "2026-08-30T00:00:00Z", "2026-08-30T00:00:01Z",
+    )
+    for wrong_comments in (
+        [native_list_comment],
+        [preexisting_comment, native_list_comment, native_list_comment],
+        [native_list_comment, preexisting_comment],
+        [{**preexisting_comment, "body": "edited history"}, native_list_comment],
+    ):
+        wrong_prefix_snapshot = json.loads(json.dumps(native_prefix_snapshot))
+        replace_json_response(wrong_prefix_snapshot["discussion"], "issue-comments", wrong_comments, rederive_human_body_hashes=False)
+        expect_failure(
+            lambda snapshot=wrong_prefix_snapshot: validate_publication_delta_v1(
+                reordered_delta, reordered_publication_pre, snapshot, attestation_fixture,
+                "2026-08-30T00:00:00Z", "2026-08-30T00:00:01Z",
+            ),
+            "native endpoint tolerance cannot hide comment deletion/duplicate/reorder/history edits",
+        )
     expect_failure(
         lambda: validate_evidence_object({**package_fixture, "schema": "gvn-evidence-package-v1"}),
         "retired evidence package v1",
@@ -8067,6 +8174,76 @@ def run_live_self_tests() -> None:
         expect_failure(lambda: require_live_residual_validity({"finding": {}}), "actual UTC expiry independent of package cutoff")
 
 
+def run_native_comment_endpoint_self_tests() -> None:
+    single = {
+        "id": 6163366646, "node_id": "IC_native_fixture", "body": "exact canonical owner statement",
+        "created_at": "2026-10-14T04:00:00Z", "updated_at": "2026-10-14T04:00:00Z",
+        "author_association": "OWNER", "performed_via_github_app": None,
+        "reactions": {"total_count": 0}, "pin": None,
+        "user": {"id": OWNER_GITHUB_ID, "login": "ZhangIvan", "type": "User",
+                 "avatar_url": f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}?u={'a' * 40}&v=4"},
+    }
+    listed = json.loads(json.dumps(single))
+    listed.pop("pin")
+    listed["user"]["avatar_url"] = f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}?v=4"
+    original_bytes = [canonical_json_v1(item) for item in (listed, single)]
+    validate_issue_comment_endpoint_equivalence(listed, single)
+    validate_issue_comment_endpoint_equivalence(single, listed)
+    require([canonical_json_v1(item) for item in (listed, single)] == original_bytes, "native endpoint comparison mutated original objects")
+    explicit_port = json.loads(json.dumps(single))
+    explicit_port["user"]["avatar_url"] = f"https://avatars.githubusercontent.com:443/u/{OWNER_GITHUB_ID}?u={'b' * 40}&v=4"
+    validate_issue_comment_endpoint_equivalence(listed, explicit_port)
+    validate_issue_comment_endpoint_equivalence(single, explicit_port)
+    for field, value in (
+        ("body", "changed"), ("id", 6163366647), ("node_id", "different"),
+        ("created_at", "2026-10-14T04:00:01Z"), ("updated_at", "2026-10-14T04:00:01Z"),
+        ("author_association", "NONE"), ("performed_via_github_app", {}),
+        ("reactions", {"total_count": 1}), ("unknown_field", None),
+    ):
+        tampered = json.loads(json.dumps(single)); tampered[field] = value
+        expect_failure(lambda item=tampered: validate_issue_comment_endpoint_equivalence(listed, item), f"native comment preserves {field}")
+    for field, value in (("id", OWNER_GITHUB_ID + 1), ("login", "other"), ("type", "Bot"), ("unknown_field", None)):
+        tampered = json.loads(json.dumps(single)); tampered["user"][field] = value
+        expect_failure(lambda item=tampered: validate_issue_comment_endpoint_equivalence(listed, item), f"native comment preserves user.{field}")
+    for value in (False, True, {}, "null", 0):
+        tampered = json.loads(json.dumps(single)); tampered["pin"] = value
+        expect_failure(lambda item=tampered: validate_issue_comment_endpoint_equivalence(listed, item), "native comment rejects non-null pin")
+        expect_failure(lambda item=tampered: validate_issue_comment_endpoint_equivalence(item, item), "native profile rejects matching non-null pin")
+    avatar_root = f"https://avatars.githubusercontent.com/u/{OWNER_GITHUB_ID}"
+    for value in (
+        avatar_root.replace("https:", "http:") + "?v=4", avatar_root.replace("avatars.githubusercontent.com", "evil.example") + "?v=4",
+        avatar_root + "/?v=4", avatar_root + "?v=4#fragment", avatar_root + "?v=4&v=4", avatar_root + "?%76=4",
+        avatar_root + "?v=4&extra=1", avatar_root + "?v=4&u=" + "a" * 40,
+        avatar_root + "?u=" + "A" * 40 + "&v=4", avatar_root + "?u=" + "a" * 39 + "&v=4",
+        avatar_root.replace("/u/", "/%75/") + "?v=4", avatar_root.replace(str(OWNER_GITHUB_ID), str(OWNER_GITHUB_ID + 1)) + "?v=4",
+        avatar_root.replace("https://", "https://user@") + "?v=4", avatar_root.replace(".com/", ".com:444/") + "?v=4",
+        avatar_root.replace("avatars", "Avatars") + "?v=4", avatar_root + "?v=4\n", avatar_root + "?v=4\r",
+        avatar_root.replace("/u/", "/u/\t") + "?v=4", None,
+    ):
+        tampered = json.loads(json.dumps(single)); tampered["user"]["avatar_url"] = value
+        expect_failure(lambda item=tampered: validate_issue_comment_endpoint_equivalence(listed, item), "native avatar profile rejects unsafe or unknown representation")
+    missing = json.loads(json.dumps(single)); missing["user"].pop("avatar_url")
+    expect_failure(lambda: validate_issue_comment_endpoint_equivalence(listed, missing), "native avatar cannot be missing on one endpoint")
+    missing_null = json.loads(json.dumps(single)); missing_null.pop("performed_via_github_app")
+    expect_failure(lambda: validate_issue_comment_endpoint_equivalence(listed, missing_null), "only pin allows absent/null")
+    nested_pin = json.loads(json.dumps(single)); nested_pin["user"]["pin"] = None
+    expect_failure(lambda: validate_issue_comment_endpoint_equivalence(listed, nested_pin), "pin allowance is top-level only")
+    for path, key, value in (
+        ((), "unknown_field", None), (("user",), "unknown_field", None), (("reactions",), "unknown_field", 0),
+        ((), "body", {"nested": []}), (("user",), "login", ["nested"]), (("reactions",), "total_count", {"nested": []}),
+        ((), "minimized", {}), ((), "performed_via_github_app", {"id": 1}),
+    ):
+        both = json.loads(json.dumps(single)); target = both
+        for part in path:
+            target = target[part]
+        target[key] = value
+        before = canonical_json_v1(both)
+        expect_failure(lambda item=both: validate_issue_comment_endpoint_equivalence(item, json.loads(json.dumps(item))), "native profile rejects matching unknown or nested fields")
+        require(canonical_json_v1(both) == before, "native negative comparison mutated nested source content")
+    legacy = {"id": 1, "user": {"id": OWNER_GITHUB_ID, "login": "ZhangIvan"}, "body": "legacy exact representation"}
+    expect_failure(lambda: validate_issue_comment_endpoint_equivalence(legacy, json.loads(json.dumps(legacy))), "native avatar required on both endpoints")
+
+
 def run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool = True) -> None:
     require(SOURCE_COMMIT == "27320e74f8cb920add83d6094fb81233dbb29636", "self-test source commit constant drifted")
     require_governance_bootstrap_base(REAL_SOURCE_COMMIT)
@@ -8085,6 +8262,7 @@ def run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool 
         "governance bootstrap must target base.ref=main",
         "governance bootstrap non-main base ref",
     )
+    run_native_comment_endpoint_self_tests()
     run_live_self_tests()
     synthetic_source_commit = "a" * 40
     dec = dec.replace(
