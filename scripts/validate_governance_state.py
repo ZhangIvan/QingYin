@@ -2663,7 +2663,7 @@ def validate_issue_comment_endpoint_equivalence(list_comment: Any, single_commen
         copied_user = dict(user)
         copied_user.pop("avatar_url")
         item["user"] = copied_user
-    require(left == right, "publication appended comment differs beyond native endpoint representations")
+    require(canonical_json_v1(left) == canonical_json_v1(right), "publication appended comment differs beyond native endpoint representations")
 
 
 def validate_publication_delta_v1(
@@ -2758,7 +2758,7 @@ def validate_publication_delta_v1(
     require(len(set(pre_comment_ids)) == len(pre_comment_ids), "pre-snapshot comment ids are not unique")
     require(len(set(snapshot_comment_ids)) == len(snapshot_comment_ids), "snapshot comment ids are not unique")
     require(len(snapshot_comments) == len(pre_comments) + 1, "publication must append exactly one attestation comment")
-    require(snapshot_comments[:-1] == pre_comments, "publication changed existing comment prefix")
+    require(canonical_json_v1(snapshot_comments[:-1]) == canonical_json_v1(pre_comments), "publication changed existing comment prefix")
     validate_issue_comment_endpoint_equivalence(snapshot_comments[-1], comment)
     require(comment.get("id") not in pre_comment_ids, "attestation comment id already existed before publication")
     require(comment.get("id") == delta["attestation_comment_id"], "publication delta comment id mismatch")
@@ -6344,6 +6344,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         bundle["component"]: json.loads(json.dumps(bundle)) for bundle in stable_bundles
     }
     preexisting_comment = json.loads(json.dumps(issue_comment_fixture))
+    preexisting_comment["user"]["site_admin"] = False
     replace_json_response(
         reordered_publication_pre["discussion"],
         "issue-comments",
@@ -6385,6 +6386,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         [preexisting_comment, native_list_comment, native_list_comment],
         [native_list_comment, preexisting_comment],
         [{**preexisting_comment, "body": "edited history"}, native_list_comment],
+        [{**preexisting_comment, "user": {**preexisting_comment["user"], "site_admin": 0}}, native_list_comment],
     ):
         wrong_prefix_snapshot = json.loads(json.dumps(native_prefix_snapshot))
         replace_json_response(wrong_prefix_snapshot["discussion"], "issue-comments", wrong_comments, rederive_human_body_hashes=False)
@@ -8240,6 +8242,14 @@ def run_native_comment_endpoint_self_tests() -> None:
         before = canonical_json_v1(both)
         expect_failure(lambda item=both: validate_issue_comment_endpoint_equivalence(item, json.loads(json.dumps(item))), "native profile rejects matching unknown or nested fields")
         require(canonical_json_v1(both) == before, "native negative comparison mutated nested source content")
+    for path, key in ((("user",), "site_admin"), (("reactions",), "total_count")):
+        boolean = json.loads(json.dumps(single)); numeric = json.loads(json.dumps(single))
+        left_target, right_target = boolean, numeric
+        for part in path:
+            left_target, right_target = left_target[part], right_target[part]
+        left_target[key], right_target[key] = False, 0
+        expect_failure(lambda: validate_issue_comment_endpoint_equivalence(boolean, numeric), "native profile preserves bool/int distinction")
+        expect_failure(lambda: validate_issue_comment_endpoint_equivalence(numeric, boolean), "native profile preserves int/bool distinction")
     legacy = {"id": 1, "user": {"id": OWNER_GITHUB_ID, "login": "ZhangIvan"}, "body": "legacy exact representation"}
     expect_failure(lambda: validate_issue_comment_endpoint_equivalence(legacy, json.loads(json.dumps(legacy))), "native avatar required on both endpoints")
 
