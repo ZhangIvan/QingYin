@@ -183,6 +183,7 @@ ZIP_CENTRAL_DIRECTORY_HEADER_SIZE = 46
 MAX_ZIP_COMMENT_BYTES = 0xFFFF
 MAX_ZIP_EOCD_SEARCH_BYTES = ZIP_EOCD_SIZE + MAX_ZIP_COMMENT_BYTES
 EVIDENCE_DIRECTORY_NAME = "qingyin-governance-evidence"
+EVIDENCE_AUTH_HEADER_PATTERN = re.compile(rb"(?i)\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n\"]{8,}")
 EVIDENCE_SECRET_PATTERNS = (
     re.compile(rb"-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"),
     re.compile(rb"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
@@ -194,7 +195,7 @@ EVIDENCE_SECRET_PATTERNS = (
     re.compile(rb"\b(?:eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,})\b"),
     re.compile(rb"\bsk-(?:proj-)?[0-9A-Za-z_-]{20,}\b"),
     re.compile(rb"(?i)\bBearer\s+[0-9A-Za-z._~+/-]{20,}={0,2}\b"),
-    re.compile(rb"(?i)\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)\s*:\s*[^\r\n\"]{8,}"),
+    EVIDENCE_AUTH_HEADER_PATTERN,
     re.compile(rb'(?i)"(?:authorization|cookie|access[_-]?token|client[_-]?secret|password|private[_-]?key)"\s*:'),
 )
 
@@ -2346,8 +2347,7 @@ def validate_package_response_semantics(
         require(isinstance(run, dict), f"workflow-run[{run_index}] must be an object")
         require_positive_int(run.get("id"), f"workflow-run[{run_index}] id")
         require_positive_int(run.get("run_attempt"), f"workflow-run[{run_index}] run_attempt")
-        require(isinstance(run.get("check_suite"), dict), f"workflow-run[{run_index}] check suite missing")
-        require_positive_int(run["check_suite"].get("id"), f"workflow-run[{run_index}] check suite id")
+        require_positive_int(run.get("check_suite_id"), f"workflow-run[{run_index}] check suite id")
         for field in ("created_at", "run_started_at", "updated_at"):
             require_utc_timestamp(run.get(field), f"workflow-run[{run_index}].{field}")
         require(
@@ -2425,8 +2425,7 @@ def validate_package_response_semantics(
             and run.get("run_attempt") == execution["run_attempt"]
             and run.get("status") == "completed"
             and run.get("conclusion") == "success"
-            and isinstance(run.get("check_suite"), dict)
-            and run["check_suite"].get("id") == execution["check_suite_id"],
+            and run.get("check_suite_id") == execution["check_suite_id"],
             f"runner execution[{index}] workflow run provenance mismatch",
         )
         contexts.append(execution["context"])
@@ -2476,7 +2475,7 @@ def validate_package_response_semantics(
         require((matching_jobs[0].get("started_at"), matching_jobs[0].get("completed_at")) == (execution["started_at"], execution["completed_at"]), f"workflow job timing mismatch: {execution['context']}")
         log_record = log_records.get(execution["job_id"])
         require(log_record is not None and log_record[0] == execution["log_sha256"], f"workflow log hash mismatch: {execution['context']}")
-        log_text = validate_utf8_bytes(log_record[1], f"workflow log for {execution['context']}")
+        log_text = decode_workflow_log(log_record[1], f"workflow log for {execution['context']}")
         marker = (
             f"GVN_EXECUTION context={execution['context']} sha={execution['execution_sha']} "
             f"tree={execution['execution_tree']} parents={root['base_sha']} {root['candidate_head']}"
@@ -3447,6 +3446,25 @@ def scan_secret_bytes(data: bytes) -> bool:
     return any(pattern.search(data) is not None for pattern in EVIDENCE_SECRET_PATTERNS)
 
 
+def decode_workflow_log(data: bytes, label: str) -> str:
+    # GitHub's native plain-text job download may contain a leading UTF-8 BOM.
+    # Decode for semantic checks only; the original bytes/hash are never rewritten.
+    return validate_utf8_bytes(data[3:] if data.startswith(b"\xef\xbb\xbf") else data, label)
+
+
+def require_no_workflow_log_secret(data: bytes, label: str) -> None:
+    """Only numeric UTF-8 job-log members may contain the exact GitHub mask value."""
+    decode_workflow_log(data, label)
+    scan_data = data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+    for header in re.finditer(rb"(?im)\b(?:Authorization|Proxy-Authorization|Cookie|Set-Cookie)" + rb"\s*:\s*[^\r\n\"]*", scan_data):
+        require(re.fullmatch(rb"(?i)Authorization" + rb":\s*basic \*\*\*", header.group().strip()) is not None, "workflow log authentication header is not the exact GitHub mask")
+    for pattern in EVIDENCE_SECRET_PATTERNS:
+        for match in pattern.finditer(scan_data):
+            if pattern is EVIDENCE_AUTH_HEADER_PATTERN and (match.start() == 0 or scan_data[match.start() - 1:match.start()] in (b" ", b"\t", b"\r", b"\n", b'"', b"'")) and re.fullmatch(rb"(?i)Authorization" + rb":\s*basic \*\*\*", match.group().strip()):
+                continue
+            fail(f"secret/privacy pattern detected in workflow log: {label}")
+
+
 def require_no_evidence_secret(data: bytes, label: str) -> None:
     require(not scan_secret_bytes(data), f"secret/privacy pattern detected in {label}")
 
@@ -3558,6 +3576,7 @@ def scan_evidence_payload(
     media_type: Any,
     label: str,
     archive_depth: int = 0,
+    allow_masked_workflow_log: bool = False,
 ) -> None:
     require(isinstance(decoded, bytes), f"evidence payload must be bytes: {label}")
     require_no_evidence_secret(decoded, f"evidence response: {label}")
@@ -3602,7 +3621,10 @@ def scan_evidence_payload(
                         require(expanded_bytes <= MAX_EVIDENCE_BYTES, f"evidence ZIP actual expansion exceeds limit: {label}")
                         member_chunks.append(chunk)
                 member_bytes = b"".join(member_chunks)
-                require_no_evidence_secret(member_bytes, f"evidence ZIP member: {member_label}")
+                if allow_masked_workflow_log and archive_depth == 0 and re.fullmatch(r"[1-9][0-9]*\.log", member.filename):
+                    require_no_workflow_log_secret(member_bytes, member_label)
+                else:
+                    require_no_evidence_secret(member_bytes, f"evidence ZIP member: {member_label}")
                 nested_zip = zipfile.is_zipfile(io.BytesIO(member_bytes)) or member_bytes.startswith(
                     (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
                 )
@@ -3640,6 +3662,7 @@ def scan_evidence_secrets(package: dict[str, Any], package_depth: int = 0) -> No
                     decoded,
                     response.get("response_media_type"),
                     f"{collection_name}[{bundle_index}][{response_index}]",
+                    allow_masked_workflow_log=(bundle.get("component") == "checks" and response.get("label") == "workflow-logs"),
                 )
 
     activation_binding = package.get("activation_binding")
@@ -4224,7 +4247,7 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "total_count": len(REQUIRED_CONTEXTS),
         "workflow_runs": [
             {
-                "check_suite": {"id": 300 + index},
+                "check_suite_id": 300 + index,
                 "conclusion": "success",
                 "event": "pull_request",
                 "head_sha": "b" * 40,
@@ -7265,6 +7288,12 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
         "GVN-P1-005 derived status mismatch",
         "GVN-P1-005 false freshness verification",
     )
+    for invalid_suite in (None, True, 999999):
+        wrong_suite_map = json.loads(json.dumps(stable_bundle_map))
+        wrong_suite_runs = response_value(wrong_suite_map["checks"], "workflow-runs")
+        wrong_suite_runs["workflow_runs"][0]["check_suite_id"] = invalid_suite
+        replace_json_response(wrong_suite_map["checks"], "workflow-runs", wrong_suite_runs)
+        expect_failure(lambda: validate_package_response_semantics(wrong_suite_map, semantic_root), "native workflow run suite missing/boolean/mismatched")
     ordinary_root = {**semantic_root, "pr_number": 17}
     forged_activation_target_package = {
         "activation_binding": {
@@ -7833,6 +7862,45 @@ def _run_self_tests(dec: str, plan: str, index: str, exercise_active_input: bool
 def run_live_self_tests() -> None:
     """No real credentials, network, or elapsed wall-clock wait in these negative tests."""
     from unittest.mock import Mock
+
+    masked = b"AUTHORIZATION" + b": basic " + b"*" * 3
+    def log_archive(content: bytes, filename: str = "1.log") -> bytes:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(filename, content)
+        return buffer.getvalue()
+    scan_evidence_payload(log_archive(masked), "application/zip", "workflow-logs", allow_masked_workflow_log=True)
+    expect_failure(lambda: require_no_evidence_secret(masked, "generic"), "masked header outside log context")
+    log_bytes = b"\xef\xbb\xbf" + masked
+    package_logs = {"component": "checks", "responses": [{"label": "workflow-logs", "response_media_type": "application/zip", "response_body_base64": base64.b64encode(log_archive(log_bytes)).decode()}]}
+    package_log_fixture = {"pre_endpoint_bundles": [], "snapshot_endpoint_bundles": [package_logs], "activation_binding": None}
+    original_log = package_logs["responses"][0]["response_body_base64"]
+    scan_evidence_secrets(package_log_fixture)
+    require(package_logs["responses"][0]["response_body_base64"] == original_log, "masked/BOM log raw bytes mutated")
+    for invalid_component, invalid_label in (("runner", "workflow-logs"), ("checks", "other")):
+        wrong_log_context = json.loads(json.dumps(package_log_fixture))
+        wrong_log_context["snapshot_endpoint_bundles"][0]["component"] = invalid_component
+        wrong_log_context["snapshot_endpoint_bundles"][0]["responses"][0]["label"] = invalid_label
+        expect_failure(lambda: scan_evidence_secrets(wrong_log_context), "package log exception context mismatch")
+    expect_failure(lambda: validate_utf8_bytes(log_bytes, "non-log"), "BOM allowed outside native log decoder")
+    nested_log_fixture = {"pre_endpoint_bundles": [], "snapshot_endpoint_bundles": [], "activation_binding": {"governance_evidence_sequence": [package_log_fixture]}}
+    scan_evidence_secrets(nested_log_fixture)
+    escaped_header_json = b'{"' + b'\\u0061uthorization' + b'":"masked"}'
+    expect_failure(lambda: scan_evidence_payload(escaped_header_json, "application/json", "workflow-logs", allow_masked_workflow_log=True), "JSON decoded header key cannot inherit log mask context")
+
+
+    for invalid in (
+        masked + b"x", masked + b"*", b"Authorization" + b": basic " + b"*" * 2, b"Authorization" + b": basic " + b"x" * 30,
+        b"Proxy-Authorization" + b": basic " + b"*" * 3,
+        b"X-Authorization" + b": basic " + b"*" * 3,
+        b"Cookie" + b": " + b"x" * 30,
+        masked + b"\n" + b"ghp_" + b"x" * 40,
+        b'{"authorization"' + b':"masked"}',
+    ):
+        expect_failure(lambda: scan_evidence_payload(log_archive(invalid), "application/zip", "workflow-logs", allow_masked_workflow_log=True), "log masked-header near-match or mixed secret")
+    for label, filename in (("other", "1.log"), ("workflow-logs", "nested/1.log"), ("workflow-logs", "metadata.txt")):
+        expect_failure(lambda: scan_evidence_payload(log_archive(masked, filename), "application/zip", label), "masked log outside exact ZIP member context")
+    expect_failure(lambda: scan_evidence_payload(log_archive(log_archive(masked), "nested.zip"), "application/zip", "workflow-logs", allow_masked_workflow_log=True), "nested ZIP cannot inherit masked log exception")
 
     request = {"schema": "gvn-request-v1", "source": "github-api", "method": "GET", "authority": "api.github.com",
                "path": "/repos/ZhangIvan/QingYin/pulls/17", "query": [], "body": None}
