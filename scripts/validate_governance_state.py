@@ -8563,6 +8563,7 @@ def parse_repair_dec(text: str) -> dict[str, Any]:
     for key in ('repair_pr', 'activation_pr'):
         if state[key] != 'PENDING':
             state[key] = parse_positive_decimal(state[key], key)
+            require(state[key] != EXPECTED_GOVERNANCE_PR, 'new profile cannot reuse historical PR19')
     for key in ('validator_blob', 'repair_candidate', 'repair_merge', 'repair_tree', 'repair_parent', 'effective_commit'):
         require(state[key] == 'PENDING' or SHA1_PATTERN.fullmatch(state[key]) is not None, f'repair DEC invalid SHA1: {key}')
     for key in ('repair_post_manifest', 'repair_attestation'):
@@ -8794,7 +8795,7 @@ def run_profile_self_tests() -> None:
         require(result.returncode == 0, 'frozen historical self-test failed: ' + result.stderr.decode('utf-8', 'replace')[-1000:])
     text = read_document(REPAIR_DEC_PATH)
     state = parse_repair_dec(text)
-    for malformed in (text.replace('- owner: ZhangIvan', '- owner: other'), text.replace('- status:', '- unknown:'), text.replace('## 执行契约', '## changed'), text.replace('\n', '\r\n')):
+    for malformed in (text.replace('- owner: ZhangIvan', '- owner: other'), text.replace('- status:', '- unknown:'), text.replace('## 执行契约', '## changed'), text.replace('\n', '\r\n'), text.replace('- repair_pr: ' + str(state['repair_pr']), '- repair_pr: 19', 1)):
         expect_failure(lambda bad=malformed: parse_repair_dec(bad), 'new DEC malformed contract')
     policy = make_evidence_policy({**state, 'repair_pr': state['repair_pr'] if isinstance(state['repair_pr'], int) else 2000000000})
     require(EVIDENCE_POLICY.get() is None, 'evidence policy leaked into structural tests')
