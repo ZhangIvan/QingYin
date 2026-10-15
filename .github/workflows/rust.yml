@@ -27,15 +27,23 @@ env:
 jobs:
   msrv:
     name: msrv
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Install declared MSRV
         run: rustup toolchain install 1.85.0 --profile minimal
+      - name: Record immutable execution evidence
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          printf 'GVN_EXECUTION context=msrv sha=%s tree=%s parents=%s\n' \
+            "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")" "$(git show -s --format=%P "$GITHUB_SHA")"
+          printf 'GVN_RUNNER context=msrv label=ubuntu-24.04 os=%s arch=%s image_os=%s image_version=%s repository=%s event=%s shallow=false\n' \
+            "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:?missing ImageOS}" "${ImageVersion:?missing ImageVersion}" "$GITHUB_REPOSITORY" "$GITHUB_EVENT_NAME"
       - name: Record runner and toolchain evidence
         run: |
           printf 'runner_os=%s\nrunner_arch=%s\nrunner_image_os=%s\nrunner_image_version=%s\n' \
@@ -48,16 +56,26 @@ jobs:
 
   format-lint:
     name: format-lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Check formatting
         run: cargo fmt --all --check
+      - name: Record immutable execution evidence
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          printf 'GVN_EXECUTION context=format-lint sha=%s tree=%s parents=%s\n' \
+            "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")" "$(git show -s --format=%P "$GITHUB_SHA")"
+          printf 'GVN_RUNNER context=format-lint label=ubuntu-24.04 os=%s arch=%s image_os=%s image_version=%s repository=%s event=%s shallow=false\n' \
+            "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:?missing ImageOS}" "${ImageVersion:?missing ImageVersion}" "$GITHUB_REPOSITORY" "$GITHUB_EVENT_NAME"
       - name: Check workspace
-        run: cargo check --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Validate crate boundaries
         run: python3 scripts/validate_workspace_boundaries.py
       - name: Validate fixture manifest
@@ -65,20 +83,40 @@ jobs:
 
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Run workspace tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --locked --workspace --all-targets
+      - name: Record immutable execution evidence
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          printf 'GVN_EXECUTION context=unit sha=%s tree=%s parents=%s\n' \
+            "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")" "$(git show -s --format=%P "$GITHUB_SHA")"
+          printf 'GVN_RUNNER context=unit label=ubuntu-24.04 os=%s arch=%s image_os=%s image_version=%s repository=%s event=%s shallow=false\n' \
+            "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:?missing ImageOS}" "${ImageVersion:?missing ImageVersion}" "$GITHUB_REPOSITORY" "$GITHUB_EVENT_NAME"
 
   security:
     name: security
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Scan for credential regressions
         run: python3 scripts/validate_secret_regressions.py
+      - name: Record immutable execution evidence
+        run: |
+          test "$(git rev-parse --is-shallow-repository)" = false
+          printf 'GVN_EXECUTION context=security sha=%s tree=%s parents=%s\n' \
+            "$GITHUB_SHA" "$(git rev-parse "$GITHUB_SHA^{tree}")" "$(git show -s --format=%P "$GITHUB_SHA")"
+          printf 'GVN_RUNNER context=security label=ubuntu-24.04 os=%s arch=%s image_os=%s image_version=%s repository=%s event=%s shallow=false\n' \
+            "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:?missing ImageOS}" "${ImageVersion:?missing ImageVersion}" "$GITHUB_REPOSITORY" "$GITHUB_EVENT_NAME"
       - name: Run security boundary tests
-        run: cargo test -p qingyin-security -p qingyin-observe
+        run: cargo test --locked -p qingyin-security -p qingyin-observe
