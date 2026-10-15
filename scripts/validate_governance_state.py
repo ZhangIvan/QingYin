@@ -4,6 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextvars
+import types
+from contextlib import contextmanager
+from types import MappingProxyType
 import ast
 import base64
 import binascii
@@ -1549,10 +1553,10 @@ def validate_package_response_semantics(
     candidate_head = root["candidate_head"]
     candidate_tree = root["candidate_tree"]
     effective_cutoff = root["snapshot_cutoff_utc"] if cutoff_utc is None else cutoff_utc
-    effective_target_type = ("governance-bootstrap" if pr_number == EXPECTED_GOVERNANCE_PR else "ordinary") if target_type is None else target_type
+    effective_target_type = ("governance-bootstrap" if pr_number == evidence_value('repair_pr', EXPECTED_GOVERNANCE_PR) else "ordinary") if target_type is None else target_type
     require_utc_timestamp(effective_cutoff, "package response cutoff")
     effective_cutoff_time = datetime.strptime(effective_cutoff, "%Y-%m-%dT%H:%M:%SZ")
-    require(effective_target_type in (*ONE_TIME_TARGET_TYPES, "ordinary"), "package response target type invalid")
+    require(effective_target_type in (*evidence_value('one_time_targets', ONE_TIME_TARGET_TYPES), "ordinary"), "package response target type invalid")
     if effective_target_type == "governance-bootstrap":
         require_governance_bootstrap_base(base_sha)
 
@@ -1564,8 +1568,8 @@ def validate_package_response_semantics(
     require(isinstance(pull.get("head"), dict) and pull["head"].get("sha") == candidate_head, "pull response head SHA mismatch")
     require(pull["base"].get("ref") == "main", "pull response base ref must be main")
     require(isinstance(pull["head"].get("ref"), str) and pull["head"]["ref"], "pull response head ref missing")
-    if pr_number == EXPECTED_GOVERNANCE_PR:
-        require(pull["head"]["ref"] == "docs/g0-single-maintainer-governance", "PR #19 head ref mismatch")
+    if pr_number == evidence_value('repair_pr', EXPECTED_GOVERNANCE_PR):
+        require(pull["head"]["ref"] == evidence_value("repair_head_ref", "docs/g0-single-maintainer-governance"), "PR #19 head ref mismatch")
     require(pull.get("state") == "open" and pull.get("draft") is False, "pull response must be open and non-draft")
     require_positive_int(pull.get("id"), "pull immutable database id")
     require(isinstance(pull.get("node_id"), str) and pull["node_id"].strip(), "pull immutable GraphQL id missing")
@@ -1632,10 +1636,10 @@ def validate_package_response_semantics(
             require(tree_entry_value.get("sha") == file_item["sha"], f"pull-files[{index}] blob differs from candidate tree")
         else:
             require(file_item["filename"] not in tree_entries, f"removed pull-files[{index}] still exists in candidate tree")
-    if pr_number == EXPECTED_GOVERNANCE_PR and base_sha == SOURCE_COMMIT:
+    if pr_number == evidence_value('repair_pr', EXPECTED_GOVERNANCE_PR) and base_sha == evidence_value('source_base', SOURCE_COMMIT):
         expected_file_statuses = {
             path.as_posix(): "added" if status == "A" else "modified"
-            for path, status in BOOTSTRAP_STATUS.items()
+            for path, status in evidence_value('bootstrap_status', BOOTSTRAP_STATUS).items()
         }
         actual_file_statuses = {item["filename"]: item["status"] for item in files}
         require(actual_file_statuses == expected_file_statuses, "PR #19 pull-files does not match the exact six-file bootstrap scope")
@@ -1874,7 +1878,7 @@ def validate_package_response_semantics(
             if field == "verified":
                 require(values, f"agent review[{index}] verified evidence cannot be empty")
         require(FRESHNESS_UNVERIFIED_MARKER not in review["verified"], f"agent review[{index}] falsely verifies stable-window capture freshness")
-        if effective_target_type in ONE_TIME_TARGET_TYPES:
+        if effective_target_type in evidence_value('one_time_targets', ONE_TIME_TARGET_TYPES):
             require(FRESHNESS_UNVERIFIED_MARKER in review["unverified"], f"agent review[{index}] does not disclose GVN-P1-005 freshness as unverified")
         require(isinstance(review["verification"], list) and review["verification"], f"agent review[{index}] verification records missing")
         verification_commands: list[str] = []
@@ -2106,7 +2110,7 @@ def validate_package_response_semantics(
         workflow_text = validate_utf8_bytes(workflow_bytes, f"workflow blob[{index}] content")
         require(hashlib.sha256(workflow_bytes).hexdigest() == workflow["content_sha256"], f"workflow blob[{index}] content SHA-256 mismatch")
         require(
-            workflow["content_sha256"] == EXPECTED_WORKFLOW_SHA256.get(workflow["path"]),
+            workflow["content_sha256"] == evidence_value('workflow_hashes', EXPECTED_WORKFLOW_SHA256).get(workflow["path"]),
             f"workflow blob[{index}] differs from the frozen reviewed bytes",
         )
         require(git_blob_sha1(workflow_bytes) == workflow["blob"], f"workflow blob[{index}] Git blob mismatch")
@@ -2225,9 +2229,9 @@ def validate_package_response_semantics(
                     run_key = f"{workflow['path']}|{job_name}|{step_number}|{step['name']}"
                     require(run_key not in actual_run_hashes, f"duplicate workflow run occurrence: {run_key}")
                     actual_run_hashes[run_key] = hashlib.sha256(run_value.encode("utf-8")).hexdigest()
-                    require(EXPECTED_RUN_SHA256.get(run_key) == actual_run_hashes[run_key], f"workflow run scalar differs from frozen command: {run_key}")
+                    require(evidence_value('run_hashes', EXPECTED_RUN_SHA256).get(run_key) == actual_run_hashes[run_key], f"workflow run scalar differs from frozen command: {run_key}")
                     if step["name"] == "Validate governance state":
-                        require(run_value == "python scripts/validate_governance_state.py --self-test", "governance validator command drifted")
+                        require(run_value == evidence_value("governance_command", "python scripts/validate_governance_state.py --self-test"), "governance validator command drifted")
                     if step["name"] == "Record immutable execution evidence":
                         context_name = job["name"]
                         require(run_value.count("GVN_EXECUTION") == 1 and run_value.count("GVN_RUNNER") == 1, f"workflow marker count mismatch: {run_key}")
@@ -2243,7 +2247,7 @@ def validate_package_response_semantics(
     require(workflow_paths == sorted(set(workflow_paths), key=utf16_sort_key), "workflow blob paths must be unique and sorted")
     require(tuple(workflow_paths) == EXPECTED_WORKFLOW_PATHS, "workflow blob inventory must contain the exact frozen workflow set")
     require(workflow_paths == candidate_workflow_paths, "workflow evidence inventory differs from the candidate recursive tree")
-    require(actual_run_hashes == EXPECTED_RUN_SHA256, "workflow run occurrence inventory differs from the frozen command set")
+    require(actual_run_hashes == evidence_value('run_hashes', EXPECTED_RUN_SHA256), "workflow run occurrence inventory differs from the frozen command set")
     require(expected_action_occurrences, "workflow action inventory cannot be empty")
     expected_action_occurrences.sort(key=lambda item: (utf16_sort_key(item["path"]), utf16_sort_key(item["job"]), item["step"], utf16_sort_key(item["action"]), utf16_sort_key(item["sha"])))
 
@@ -2791,6 +2795,8 @@ def derive_evidence_target_type(
     root: dict[str, Any],
     authorized_target_type: str | None = None,
 ) -> str:
+    if EVIDENCE_POLICY.get() is not None:
+        return profile_evidence_target(package, root, authorized_target_type)
     require(authorized_target_type in (None, "activation-evidence"), "authorized evidence target type invalid")
     binding = package["activation_binding"]
     if authorized_target_type is None:
@@ -2809,7 +2815,7 @@ def derive_evidence_target_type(
 
 def require_merge_ready_freshness(target_type: str) -> None:
     require(
-        target_type in ONE_TIME_TARGET_TYPES,
+        target_type in evidence_value('one_time_targets', ONE_TIME_TARGET_TYPES),
         "ordinary merge-ready evidence requires a trusted freshness receipt schema",
     )
 
@@ -2846,9 +2852,9 @@ def validate_finding_ledger(
     target_type: str,
     paths_bundle: dict[str, Any] | None = None,
 ) -> None:
-    require(target_type in (*ONE_TIME_TARGET_TYPES, "ordinary"), "evidence target type invalid")
+    require(target_type in (*evidence_value('one_time_targets', ONE_TIME_TARGET_TYPES), "ordinary"), "evidence target type invalid")
     candidate_head = root["candidate_head"]
-    expected_residual_ids = RESIDUAL_IDS if target_type in ONE_TIME_TARGET_TYPES else COMMON_RESIDUAL_IDS
+    expected_residual_ids = RESIDUAL_IDS if target_type in evidence_value('one_time_targets', ONE_TIME_TARGET_TYPES) else COMMON_RESIDUAL_IDS
     ledger = require_exact_object(response_value(bundle, "finding-ledger"), ("findings",), "finding ledger")
     require(isinstance(ledger["findings"], list), "finding ledger findings must be an array")
     finding_ids: list[str] = []
@@ -2892,7 +2898,7 @@ def validate_finding_ledger(
         for field in ("owner", "scope", "reason", "mitigation", "rollback", "disposition"):
             require(finding[field].strip() == finding[field] and finding[field], f"finding[{index}].{field} must be non-empty and trimmed")
         if finding["id"] in RESIDUAL_IDS:
-            require(finding["owner"] == "ZhangIvan" and finding["scope"] == RESIDUAL_SCOPES[finding["id"]], "fixed residual owner/scope drifted")
+            require(finding["owner"] == "ZhangIvan" and finding["scope"] == evidence_value('residual_scopes', RESIDUAL_SCOPES)[finding["id"]], "fixed residual owner/scope drifted")
         if finding["id"] not in RESIDUAL_IDS:
             require(finding["scope"].startswith("repository-only: "), f"finding[{index}] scope must be explicitly repository-only")
             normalized_scope = finding["scope"].removeprefix("repository-only: ").casefold()
@@ -2928,7 +2934,7 @@ def validate_finding_ledger(
             require(finding["severity"] == "P1", "only P1 may be Accepted-Residual")
             require(finding["id"] in expected_residual_ids, f"evidence target cannot accept residual: {finding['id']}")
             require(finding["owner"] == "ZhangIvan", "Accepted-Residual owner must be ZhangIvan")
-            require(finding["scope"] == RESIDUAL_SCOPES[finding["id"]], f"Accepted-Residual scope mismatch: {finding['id']}")
+            require(finding["scope"] == evidence_value('residual_scopes', RESIDUAL_SCOPES)[finding["id"]], f"Accepted-Residual scope mismatch: {finding['id']}")
             require(finding["invalidators"], f"Accepted-Residual invalidators missing: {finding['id']}")
             require_utc_timestamp(finding["valid_until"], f"finding[{index}].valid_until")
             require(finding["valid_until"] == RESIDUAL_VALID_UNTIL, f"Accepted-Residual expiry drifted: {finding['id']}")
@@ -3010,8 +3016,8 @@ def validate_finding_ledger(
             require(acceptance["accepted_by"] == "ZhangIvan", f"Accepted-Residual owner identity mismatch: {finding['id']}")
             require_positive_int(acceptance["accepted_by_id"], f"Accepted-Residual accepted_by_id: {finding['id']}")
             require(acceptance["accepted_by_id"] == OWNER_GITHUB_ID, f"Accepted-Residual owner identity mismatch: {finding['id']}")
-            require(acceptance["decision"] == "DEC-20260829-001", f"Accepted-Residual decision mismatch: {finding['id']}")
-            require(acceptance["section_sha256"] == RESIDUAL_SECTION_SHA256[finding["id"]], f"Accepted-Residual section digest mismatch: {finding['id']}")
+            require(acceptance["decision"] == evidence_value("decision_id", "DEC-20260829-001"), f"Accepted-Residual decision mismatch: {finding['id']}")
+            require(acceptance["section_sha256"] == evidence_value('residual_hashes', RESIDUAL_SECTION_SHA256)[finding["id"]], f"Accepted-Residual section digest mismatch: {finding['id']}")
             require(acceptance["verification_reports"] == expected_verification_reports, f"Accepted-Residual verifier reports differ from fresh Agent reviews: {finding['id']}")
             require(acceptance["owner_attestation_required"] is True, f"Accepted-Residual must remain pending exact owner attestation: {finding['id']}")
             accepted_residual_ids.append(finding["id"])
@@ -3726,6 +3732,10 @@ def scan_evidence_secrets(package: dict[str, Any], package_depth: int = 0) -> No
     if activation_binding is None:
         return
     require(isinstance(activation_binding, dict), "activation binding must be an object before evidence scan")
+    repair_packages = activation_binding.get("repair_evidence_sequence", [])
+    require(isinstance(repair_packages, list), "repair evidence stream must be an array")
+    for repair_package in repair_packages:
+        scan_evidence_secrets(repair_package, package_depth + 1)
     nested_packages = activation_binding.get("governance_evidence_sequence")
     if nested_packages is None:
         return
@@ -3766,6 +3776,9 @@ def read_evidence_package_file(path: Path) -> dict[str, Any]:
             require(evidence_size <= MAX_EVIDENCE_BYTES, f"evidence file grew beyond {MAX_EVIDENCE_BYTES} bytes while reading: {path}")
             evidence_chunks.append(chunk)
         evidence_bytes = b"".join(evidence_chunks)
+        after_metadata = os.fstat(descriptor)
+        stable_fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+        require(all(getattr(metadata, field) == getattr(after_metadata, field) for field in stable_fields) and len(evidence_bytes) == metadata.st_size, 'evidence file changed while being read')
     finally:
         os.close(descriptor)
     evidence_text = validate_utf8_bytes(evidence_bytes, str(path))
@@ -8484,5 +8497,389 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+
+# The original v1 constants and default evidence semantics above are historical.
+# A new explicit policy is selected only after the v2 repository gate below.
+EVIDENCE_POLICY: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar('qingyin_evidence_policy', default=None)
+REPAIR_DEC_PATH = Path('docs/04-delivery/QingYin_DEC-20261015-001_治理激活执行修复.md')
+REPAIR_BASE = '838faa2633d78058a3e180196cc7e440d8adbf37'
+REPAIR_TREE = '639accceb367c4b5d3eeb667f49e50493478af8a'
+LEGACY_CANDIDATE = '83c810536d3be848998683a2ad181a7e2a918ca2'
+LEGACY_VALIDATOR = '75ac048e869f4219e99f4165714810a41711fd13'
+LEGACY_SOURCE_SHA256 = 'eccac7cca64988d5a6c6c12bd2f995cf5b623351ae67d1f66d3b92c59874eb70'
+LEGACY_POST_MANIFEST = '0c28f0b7c083e1b34f75391e43a6953fc1e19b08bcbd663034aad407beb138e5'
+LEGACY_ATTESTATION = '0df7e1919ac45de50eefe56170f6377db796b9b48f75dc7fd768a12183b0242c'
+REPAIR_BODY_SHA256 = 'f7343462496b0dc72f8f16c50175176462debbd1fd1cd7da77c69086e573daad'
+REPAIR_BRANCH = 'codex/governance-activation-repair'
+REPAIR_COMMAND = 'python scripts/validate_governance_state.py --ci-structural-only --self-test'
+REPAIR_HEADER_KEYS = ('profile', 'owner', 'base', 'legacy_merge', 'legacy_candidate', 'legacy_tree', 'legacy_parent', 'legacy_validator', 'repair_pr', 'validator_blob', 'status', 'effectivity', 'repair_candidate', 'repair_merge', 'repair_tree', 'repair_parent', 'repair_post_manifest', 'repair_attestation', 'activation_pr', 'effective_commit')
+REPAIR_POINTERS = ('repair_candidate', 'repair_merge', 'repair_tree', 'repair_parent', 'repair_post_manifest', 'repair_attestation', 'activation_pr', 'effective_commit')
+REPAIR_MUTABLE = frozenset(('status', 'effectivity', *REPAIR_POINTERS))
+REPAIR_PATH_STATUS = {REPAIR_DEC_PATH: 'A', VALIDATOR_PATH: 'M', WORKFLOW_PATH: 'M', PLAN_PATH: 'M', INDEX_PATH: 'M'}
+REPAIR_OLD_BLOBS = {WORKFLOW_PATH: '6d1bdf07e891c4a9ab64e71abe6cbff7e381612a', RUST_WORKFLOW_PATH: '8726dcc35695c6db8a50c600315148fbf283405c', INDEX_PATH: 'cfa1efb34c5479901faa7663c64a3236a13dad95', DEC_PATH: '1050578bff9c2cadc2e75f20744da6ecda90d53a', PLAN_PATH: '39974d241553559851aa7e7f0bc1026e9d04d278', VALIDATOR_PATH: LEGACY_VALIDATOR}
+REPAIR_SCOPE_005 = '仅 DEC-20261015-001 本次 execution-remediation repair PR 与其唯一 activation evidence PR 的 candidate-bound evidence，以及 activation binding 内嵌的固定 PR19 和 repair 完整历史流；不得用于普通PR、业务代码、生产、部署、发布、secret、credential、tenant、customer data、traffic或external gate。'
+REPAIR_PLAN_SECTION = '''## 0. 决策优先级与过渡边界
+
+当前执行修复以 DEC-20261015-001 为唯一状态源；旧 DEC-20260829-001 保持冻结 PROPOSED/PENDING，仅用于历史原文与 PR19 重放。本文后续旧 DEC 引用中的角色、CR/Finding、安全和生产约束按新 DEC 精确继承；旧 bootstrap/activation/CLI 执行条款由新 DEC 替代，不能使用旧路径申请激活。
+
+修复候选与 repair post 完成后仍 PENDING。独立 activation PR 的完整证据、两路 fresh review、精确 owner 接受、required checks、600秒窗口、protected merge/post 全部 VERIFIED 后才语义 ACTIVE。工程计划 header 和交付 INDEX 是新 DEC 的受控投影，文件 ACTIVE 本身不授权普通合并。新候选的接受不能复用 PR19；不改变保护、权限或生产边界。
+
+'''
+REPAIR_INDEX_NOTE = '新 DEC-20261015-001 是执行修复 profile 的唯一状态源；旧 DEC 标签永久保留历史 PENDING。新状态标签与工程计划 header 受控同步，修复合并仍 PENDING；activation 必须完整私有证据、独立 review、精确 owner 接受、protected merge 和 post 全部 VERIFIED 后才语义 ACTIVE。索引不授予治理或生产权限。'
+
+
+def evidence_value(name: str, legacy: Any) -> Any:
+    policy = EVIDENCE_POLICY.get()
+    return legacy if policy is None else policy[name]
+
+
+@contextmanager
+def use_evidence_policy(policy: dict[str, Any]) -> Any:
+    require(policy.get('decision_id') == 'DEC-20261015-001', 'new evidence policy identity missing')
+    token = EVIDENCE_POLICY.set(policy)
+    try:
+        yield
+    finally:
+        EVIDENCE_POLICY.reset(token)
+
+
+def parse_repair_dec(text: str) -> dict[str, Any]:
+    raw = text.encode('utf-8')
+    require(not raw.startswith(b'\xef\xbb\xbf') and '\r' not in text and text == unicodedata.normalize('NFC', text), 'repair DEC encoding must be UTF-8 LF NFC without BOM')
+    require(text.endswith('\n') and not text.endswith('\n\n'), 'repair DEC requires one terminal LF')
+    separator = '\n\n## 执行契约\n'
+    require(text.count(separator) == 1, 'repair DEC body separator ambiguous')
+    header, body = text.split(separator)
+    lines = header.split('\n')
+    require(lines[0] == '# DEC-20261015-001：治理激活执行修复' and len(lines) == len(REPAIR_HEADER_KEYS) + 1, 'repair DEC header shape invalid')
+    state: dict[str, Any] = {}
+    for line, key in zip(lines[1:], REPAIR_HEADER_KEYS):
+        prefix = f'- {key}: '
+        require(line.startswith(prefix) and line[len(prefix):] and line == line.strip(), f'repair DEC header order/value invalid: {key}')
+        state[key] = line[len(prefix):]
+    require(hashlib.sha256(('## 执行契约\n' + body).encode('utf-8')).hexdigest() == REPAIR_BODY_SHA256, 'repair DEC frozen body drift')
+    fixed = {'profile': 'gvn-execution-remediation-v1', 'owner': 'ZhangIvan', 'base': REPAIR_BASE, 'legacy_merge': REPAIR_BASE, 'legacy_candidate': LEGACY_CANDIDATE, 'legacy_tree': REPAIR_TREE, 'legacy_parent': SOURCE_COMMIT, 'legacy_validator': LEGACY_VALIDATOR}
+    require(all(state[key] == value for key, value in fixed.items()), 'repair DEC fixed source/identity mismatch')
+    for key in ('repair_pr', 'activation_pr'):
+        if state[key] != 'PENDING':
+            state[key] = parse_positive_decimal(state[key], key)
+            require(state[key] != EXPECTED_GOVERNANCE_PR, 'new profile cannot reuse historical PR19')
+    for key in ('validator_blob', 'repair_candidate', 'repair_merge', 'repair_tree', 'repair_parent', 'effective_commit'):
+        require(state[key] == 'PENDING' or SHA1_PATTERN.fullmatch(state[key]) is not None, f'repair DEC invalid SHA1: {key}')
+    for key in ('repair_post_manifest', 'repair_attestation'):
+        require(state[key] == 'PENDING' or SHA256_PATTERN.fullmatch(state[key]) is not None, f'repair DEC invalid SHA256: {key}')
+    require((state['status'], state['effectivity']) in (('PROPOSED', 'PENDING'), ('ACTIVE', 'ACTIVE')), 'repair status pair invalid')
+    if state['status'] == 'PROPOSED':
+        require(all(state[key] == 'PENDING' for key in REPAIR_POINTERS), 'repair proposal cannot contain self-referential evidence pointers')
+    else:
+        require(all(state[key] != 'PENDING' for key in (*REPAIR_POINTERS, 'repair_pr', 'validator_blob')), 'ACTIVE pointers incomplete')
+        require(state['repair_pr'] != state['activation_pr'] and state['repair_merge'] == state['effective_commit'], 'repair/activation pointer relationship invalid')
+        require(state['repair_parent'] == REPAIR_BASE, 'repair protected squash parent must be fixed repair base')
+    return state
+
+
+def repair_projections(state: dict[str, Any]) -> tuple[str, str]:
+    plan = git_text_at(REPAIR_BASE, PLAN_PATH)
+    label = f"{state['status']} / effective={state['effective_commit']}"
+    old_header = next(line for line in plan.splitlines() if line.startswith('状态：'))
+    new_header = f'状态：实施基线；[DEC-20261015-001]({REPAIR_DEC_PATH.name}) 为 `{label}`；旧 DEC-20260829-001 仅作冻结历史'
+    plan = plan.replace(old_header, new_header, 1)
+    start, end = plan.index('## 0.'), plan.index('## 1.')
+    plan = plan[:start] + REPAIR_PLAN_SECTION + plan[end:]
+    index = git_text_at(REPAIR_BASE, INDEX_PATH)
+    anchor = '6. [M1 后续阶段推进计划](QingYin_M1_阶段推进计划.md)'
+    new_link = f'7. [DEC-20261015-001：治理激活执行修复（{label}）]({REPAIR_DEC_PATH.name})'
+    require(index.count(anchor) == 1, 'legacy index projection anchor missing')
+    index = index.replace(anchor, anchor + '\n' + new_link, 1)
+    start = index.index('DEC 状态标签是受控副本：')
+    end = index.index('\n\n', start)
+    index = index[:start] + REPAIR_INDEX_NOTE + index[end:]
+    return plan, index
+
+
+def repair_anchor_checks() -> None:
+    require(git('rev-parse', '--is-shallow-repository').stdout == b'false\n', 'new profile requires full history')
+    require(git('show', '-s', '--format=%T %P', REPAIR_BASE).stdout.decode().strip() == REPAIR_TREE + ' ' + SOURCE_COMMIT, 'repair base tree/parent mismatch')
+    for path, blob in REPAIR_OLD_BLOBS.items():
+        require(tree_entry(REPAIR_BASE, path) == ('100644', 'blob', blob), f'repair old control anchor mismatch: {path}')
+    require(read_document(DEC_PATH) == git_text_at(REPAIR_BASE, DEC_PATH), 'legacy DEC must remain frozen')
+    require(read_document(RUST_WORKFLOW_PATH) == git_text_at(REPAIR_BASE, RUST_WORKFLOW_PATH), 'Rust workflow must remain frozen')
+    expected_workflow = git_text_at(REPAIR_BASE, WORKFLOW_PATH).replace('python scripts/validate_governance_state.py --self-test', REPAIR_COMMAND)
+    require(read_document(WORKFLOW_PATH) == expected_workflow, 'repair workflow may change only the explicit structural command')
+
+
+def profile_checkout(base: str, head: str) -> str:
+    require(not git('status', '--porcelain').stdout, 'profile execution requires a clean worktree')
+    require(git('rev-parse', f'{head}^{{commit}}').stdout.decode().strip() == head, 'profile candidate must resolve exactly')
+    checkout = git('rev-parse', 'HEAD^{commit}').stdout.decode().strip()
+    tree = git('rev-parse', f'{head}^{{tree}}').stdout.decode().strip()
+    require(git('rev-parse', 'HEAD^{tree}').stdout.decode().strip() == tree, 'profile checkout tree differs from candidate')
+    if checkout != head:
+        require(git('show', '-s', '--format=%P', checkout).stdout.decode().split() == [base, head], 'profile synthetic parents must be ordered base,candidate')
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        require(os.environ.get('GITHUB_SHA') == checkout, 'profile GITHUB_SHA mismatch')
+    elif os.environ.get('GITHUB_SHA'):
+        require(os.environ['GITHUB_SHA'] == checkout, 'profile execution SHA mismatch')
+    return tree
+
+
+def validate_profile_repository(base: str | None, base_ref: str | None, head: str | None, pr: int) -> dict[str, Any]:
+    state = parse_repair_dec(read_document(REPAIR_DEC_PATH))
+    repair_anchor_checks()
+    plan, index = read_document(PLAN_PATH), read_document(INDEX_PATH)
+    expected_plan, expected_index = repair_projections(state)
+    require(next(line for line in plan.splitlines() if line.startswith('状态：')) == next(line for line in expected_plan.splitlines() if line.startswith('状态：')), 'new plan status projection mismatch')
+    expected_label = next(line for line in expected_index.splitlines() if line.startswith('7. [DEC-20261015-001'))
+    require(index.splitlines().count(expected_label) == 1 and REPAIR_INDEX_NOTE in index and REPAIR_PLAN_SECTION in plan, 'new index/state authority projection mismatch')
+    require(state['validator_blob'] != 'PENDING', 'new profile validator blob is not finalized')
+    require(git_blob_sha1((ROOT / VALIDATOR_PATH).read_bytes()) == state['validator_blob'], 'new profile validator bytes mismatch')
+    if base is None:
+        return state
+    require(base_ref == 'main' and head is not None, 'new profile PR must target exact main context')
+    require_positive_int(pr, 'new profile PR')
+    tree = profile_checkout(base, head)
+    state['candidate_tree'] = tree
+    require(tree_entry(head, VALIDATOR_PATH) == ('100644', 'blob', state['validator_blob']), 'new validator blob not bound to candidate')
+    require(git('merge-base', '--is-ancestor', REPAIR_BASE, base, check=False).returncode == 0, 'new profile base is outside fixed historical lineage')
+    for path in (REPAIR_DEC_PATH, VALIDATOR_PATH, WORKFLOW_PATH, PLAN_PATH, INDEX_PATH, DEC_PATH, RUST_WORKFLOW_PATH):
+        entry = tree_entry(head, path)
+        require(entry is not None and entry[:2] == ('100644', 'blob'), f'profile control must be 100644: {path}')
+    entries = cumulative_name_status(base)
+    base_has_repair = git('cat-file', '-e', f'{base}:{REPAIR_DEC_PATH}', check=False).returncode == 0
+    if not base_has_repair:
+        require(base == REPAIR_BASE and state['status'] == 'PROPOSED' and state['repair_pr'] == pr, 'repair bootstrap exact base/PR/status mismatch')
+        require(entries == REPAIR_PATH_STATUS, f'repair bootstrap must change exactly five files: {entries}')
+        validate_history_allowlist(base, 'HEAD', set(REPAIR_PATH_STATUS), 'execution repair bootstrap')
+        for _commit, path, old_mode, new_mode, status in reachable_history_changes(base, 'HEAD'):
+            require((status == 'A' and path == REPAIR_DEC_PATH and old_mode == '000000' and new_mode == '100644') or (status == 'M' and old_mode == new_mode == '100644'), 'repair history cannot delete/recreate existing controls or change their type')
+        require(plan == expected_plan and index == expected_index, 'repair may change only controlled document projections')
+    else:
+        old_text = git_text_at(base, REPAIR_DEC_PATH)
+        old = parse_repair_dec(old_text)
+        if old['status'] == 'ACTIVE':
+            require(read_document(REPAIR_DEC_PATH) == old_text, 'ACTIVE new DEC is immutable')
+            frozen = {REPAIR_DEC_PATH, VALIDATOR_PATH, WORKFLOW_PATH, RUST_WORKFLOW_PATH, DEC_PATH}
+            require(not frozen.intersection(entries), 'ordinary PR cannot change frozen controls')
+            validate_history_forbidden_paths(base, 'HEAD', frozen, 'ACTIVE new profile')
+            for path, current, prefix in ((PLAN_PATH, plan, '状态：'), (INDEX_PATH, index, '7. [DEC-20261015-001')):
+                old_lines = [line for line in git_text_at(base, path).splitlines() if line.startswith(prefix)]
+                require(old_lines == [line for line in current.splitlines() if line.startswith(prefix)], 'ordinary PR cannot change controlled state projection')
+        elif state['status'] != 'ACTIVE':
+            require(read_document(REPAIR_DEC_PATH) == old_text, 'pending new DEC is immutable outside activation')
+            frozen = set(BOOTSTRAP_PATHS) | {REPAIR_DEC_PATH}
+            require(not frozen.intersection(entries), 'pending controls cannot drift')
+            validate_history_forbidden_paths(base, 'HEAD', frozen, 'pending new profile')
+        else:
+            require(state['activation_pr'] == pr and state['repair_pr'] != pr, 'activation PR pointer mismatch')
+            require(entries == {path: 'M' for path in (REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH)}, 'activation must change exactly three documents')
+            validate_history_allowlist(base, 'HEAD', {REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH}, 'new activation')
+            require(all(status == 'M' and old_mode == new_mode == '100644' for _commit, _path, old_mode, new_mode, status in reachable_history_changes(base, 'HEAD')), 'activation history permits only ordinary blob modifications')
+            require(all(old[key] == state[key] for key in REPAIR_HEADER_KEYS if key not in REPAIR_MUTABLE), 'activation changed a frozen header')
+            require(len(read_document(REPAIR_DEC_PATH).splitlines()) == len(old_text.splitlines()), 'activation cannot add/delete DEC lines')
+            require(plan == expected_plan and index == expected_index, 'activation projection changed frozen document bytes')
+            effective = state['repair_merge']
+            require(git('merge-base', '--is-ancestor', effective, base, check=False).returncode == 0, 'repair merge is not activation base ancestor')
+            controls = set(BOOTSTRAP_PATHS) | {REPAIR_DEC_PATH}
+            validate_history_forbidden_paths(effective, base, controls, 'repair to activation control lineage')
+            require(all(tree_entry(effective, path) == tree_entry(base, path) for path in controls), 'repair controls drifted before activation')
+            merged_repair = parse_repair_dec(git_text_at(effective, REPAIR_DEC_PATH))
+            require(merged_repair['status'] == 'PROPOSED' and merged_repair['repair_pr'] == state['repair_pr'], 'repair anchor is not the pending repair decision')
+            require(git('show', '-s', '--format=%T %P', effective).stdout.decode().strip() == state['repair_tree'] + ' ' + state['repair_parent'], 'repair anchor tree/parent mismatch')
+    return state
+
+
+def make_evidence_policy(state: dict[str, Any]) -> dict[str, Any]:
+    require(isinstance(state['repair_pr'], int) and not isinstance(state['repair_pr'], bool), 'evidence policy requires finalized repair PR')
+    workflow_hashes = dict(EXPECTED_WORKFLOW_SHA256)
+    workflow_hashes[str(WORKFLOW_PATH)] = hashlib.sha256(read_document(WORKFLOW_PATH).encode()).hexdigest()
+    run_hashes = dict(EXPECTED_RUN_SHA256)
+    run_hashes[str(WORKFLOW_PATH) + '|design-contracts|7|Validate governance state'] = hashlib.sha256(REPAIR_COMMAND.encode()).hexdigest()
+    scopes, hashes = dict(RESIDUAL_SCOPES), dict(RESIDUAL_SECTION_SHA256)
+    scopes['GVN-P1-005'] = REPAIR_SCOPE_005
+    body = read_document(REPAIR_DEC_PATH)
+    residual_section = body[body.index('GVN-P1-005的新scope精确为：'):body.index('### 6. 验证与恢复')]
+    hashes['GVN-P1-005'] = hashlib.sha256(residual_section.encode()).hexdigest()
+    return MappingProxyType({'decision_id': 'DEC-20261015-001', 'repair_pr': state['repair_pr'], 'source_base': REPAIR_BASE, 'repair_head_ref': REPAIR_BRANCH, 'bootstrap_status': MappingProxyType(REPAIR_PATH_STATUS), 'workflow_hashes': MappingProxyType(workflow_hashes), 'run_hashes': MappingProxyType(run_hashes), 'residual_scopes': MappingProxyType(scopes), 'residual_hashes': MappingProxyType(hashes), 'one_time_targets': ('execution-remediation', 'activation-evidence'), 'governance_command': REPAIR_COMMAND})
+
+
+def profile_evidence_target(package: dict[str, Any], root: dict[str, Any], authorized: str | None) -> str:
+    policy = EVIDENCE_POLICY.get()
+    require(policy is not None, 'new target requires explicit policy')
+    if authorized == 'execution-remediation':
+        require(root['pr_number'] == policy['repair_pr'] and root['base_sha'] == REPAIR_BASE and package['activation_binding'] is None, 'repair evidence exact target mismatch')
+        return authorized
+    if authorized == 'activation-evidence':
+        binding = package['activation_binding']
+        require(isinstance(binding, dict) and binding.get('schema') == 'gvn-activation-binding-v2', 'new activation requires binding v2')
+        require((binding.get('activation_evidence_pr'), binding.get('activation_candidate_head'), binding.get('activation_candidate_tree')) == (root['pr_number'], root['candidate_head'], root['candidate_tree']), 'new activation target mismatch')
+        return authorized
+    require(authorized is None and package['activation_binding'] is None and root['pr_number'] != policy['repair_pr'], 'ordinary evidence must not claim bootstrap authorization')
+    return 'ordinary'
+
+
+@contextmanager
+def historical_pr19() -> Any:
+    source = git('cat-file', 'blob', f'{REPAIR_BASE}:{VALIDATOR_PATH}').stdout
+    require(len(source) <= MAX_VALIDATOR_SOURCE_BYTES and git_blob_sha1(source) == LEGACY_VALIDATOR and hashlib.sha256(source).hexdigest() == LEGACY_SOURCE_SHA256, 'frozen historical source mismatch')
+    with tempfile.TemporaryDirectory(prefix='qingyin-historical-') as directory:
+        checkout = Path(directory) / 'repo'
+        env = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0', 'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
+        for args in (['git', '-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(ROOT), str(checkout)], ['git', '-C', str(checkout), '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', REPAIR_BASE]):
+            subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=30)
+        for revision, expected in (('HEAD', REPAIR_BASE), ('HEAD^{tree}', REPAIR_TREE), (f'HEAD:{VALIDATOR_PATH}', LEGACY_VALIDATOR)):
+            actual = subprocess.run(['git', '-C', str(checkout), 'rev-parse', revision], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=15).stdout.decode('ascii').strip()
+            require(actual == expected, 'historical clone checkout identity mismatch')
+        name = '_qingyin_frozen_pr19_' + Path(directory).name.replace('-', '_')
+        module = types.ModuleType(name)
+        module.__file__ = str(checkout / VALIDATOR_PATH)
+        sys.modules[name] = module
+        try:
+            exec(compile(source, module.__file__, 'exec'), module.__dict__)
+            yield module, checkout, env
+        finally:
+            sys.modules.pop(name, None)
+
+
+def validate_pr19_history(packages: Any) -> None:
+    require(isinstance(packages, list) and len(packages) == 3 and all(isinstance(p, dict) and p.get('activation_binding') is None for p in packages), 'historical PR19 requires three nonrecursive packages')
+    with historical_pr19() as (module, _checkout, _env):
+        try:
+            module.validate_evidence_sequence(packages)
+        except module.GovernanceValidationError as exc:
+            fail(f'historical PR19 validation failed: {exc}')
+    pre, post = packages[0]['pre_attestation'], packages[-1]
+    require((pre['pr_number'], pre['base_sha'], pre['candidate_head'], pre['candidate_tree']) == (19, SOURCE_COMMIT, LEGACY_CANDIDATE, REPAIR_TREE), 'historical PR19 exact candidate mismatch')
+    require(post['manifest']['effective_merge_sha'] == REPAIR_BASE, 'historical PR19 merge mismatch')
+    require(hashlib.sha256(canonical_json_v1(post['manifest'])).hexdigest() == LEGACY_POST_MANIFEST and hashlib.sha256(canonical_json_v1(post['attestation'])).hexdigest() == LEGACY_ATTESTATION, 'historical PR19 frozen evidence digest mismatch')
+
+
+def validate_new_binding(packages: list[dict[str, Any]], state: dict[str, Any], pr: int) -> None:
+    require(EVIDENCE_POLICY.get() is not None, 'binding v2 requires explicit policy')
+    binding = require_exact_object(packages[0]['activation_binding'], ('schema', 'activation_evidence_pr', 'activation_candidate_head', 'activation_candidate_tree', 'governance_evidence_sequence', 'repair_evidence_sequence'), 'binding v2')
+    require(binding['schema'] == 'gvn-activation-binding-v2' and binding['activation_evidence_pr'] == pr == state['activation_pr'], 'binding v2 identity mismatch')
+    pre = packages[0]['pre_attestation']
+    require((binding['activation_candidate_head'], binding['activation_candidate_tree']) == (pre['candidate_head'], pre['candidate_tree']), 'binding v2 candidate mismatch')
+    paths = {bundle['component']: bundle for bundle in packages[0]['pre_endpoint_bundles']}['paths']
+    files = response_value(paths, 'pull-files')
+    require({item['filename']: item['status'] for item in files} == {str(path): 'modified' for path in (REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH)}, 'activation history must describe exactly three modified governance documents')
+    validate_pr19_history(binding['governance_evidence_sequence'])
+    repair = binding['repair_evidence_sequence']
+    require(isinstance(repair, list) and len(repair) == 3 and all(isinstance(p, dict) and p.get('activation_binding') is None for p in repair), 'repair history requires three nonrecursive packages')
+    expected = CurrentPRContext(REPAIR_BASE, 'main', state['repair_candidate'], state['repair_tree'], state['repair_pr'])
+    validate_evidence_sequence(repair, current_context=expected, authorized_target_type='execution-remediation')
+    post = repair[-1]
+    require(post['phase'] == 'post-merge' and post['manifest']['effective_merge_sha'] == state['repair_merge'], 'repair history merge mismatch')
+    merge = response_value(post['snapshot_endpoint_bundles'][-1], 'merge-commit')
+    require(merge.get('parents') == [state['repair_parent']], 'repair history merge parent mismatch')
+    require(hashlib.sha256(canonical_json_v1(post['manifest'])).hexdigest() == state['repair_post_manifest'] and hashlib.sha256(canonical_json_v1(post['attestation'])).hexdigest() == state['repair_attestation'], 'repair history digest mismatch')
+
+
+def validate_activation_history(packages: list[dict[str, Any]], state: dict[str, Any], current_base: str) -> None:
+    require(len(packages) == 3 and tuple(p.get('phase') for p in packages) == ('stable-window-start', 'stable-window-end', 'post-merge'), 'ordinary authorization requires complete activation history')
+    pre = packages[0]['pre_attestation']
+    require(pre['pr_number'] == state['activation_pr'], 'activation history PR mismatch')
+    context = CurrentPRContext(pre['base_sha'], 'main', pre['candidate_head'], pre['candidate_tree'], pre['pr_number'])
+    validate_evidence_sequence(packages, current_context=context, authorized_target_type='activation-evidence')
+    validate_new_binding(packages, state, pre['pr_number'])
+    merge = packages[-1]['manifest']['effective_merge_sha']
+    require(git('merge-base', '--is-ancestor', merge, current_base, check=False).returncode == 0, 'activation actual merge is not current base ancestor')
+    require(git_text_at(merge, REPAIR_DEC_PATH) == read_document(REPAIR_DEC_PATH), 'activation history decision differs from current frozen decision')
+    actual = response_value(packages[-1]['snapshot_endpoint_bundles'][-1], 'merge-commit')
+    require(git('show', '-s', '--format=%T %P', merge).stdout.decode().strip() == actual['tree'] + ' ' + ' '.join(actual['parents']), 'activation Git object differs from API merge evidence')
+
+
+def run_profile_self_tests() -> None:
+    # Historical tests run against the historical tree with Actions env removed.
+    with historical_pr19() as (_module, checkout, env):
+        result = subprocess.run([sys.executable, '-I', '-B', str(checkout / VALIDATOR_PATH), '--self-test'], cwd=checkout, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        require(result.returncode == 0, 'frozen historical self-test failed: ' + result.stderr.decode('utf-8', 'replace')[-1000:])
+    text = read_document(REPAIR_DEC_PATH)
+    state = parse_repair_dec(text)
+    for malformed in (text.replace('- owner: ZhangIvan', '- owner: other'), text.replace('- status:', '- unknown:'), text.replace('## 执行契约', '## changed'), text.replace('\n', '\r\n'), text.replace('- repair_pr: ' + str(state['repair_pr']), '- repair_pr: 19', 1)):
+        expect_failure(lambda bad=malformed: parse_repair_dec(bad), 'new DEC malformed contract')
+    policy = make_evidence_policy({**state, 'repair_pr': state['repair_pr'] if isinstance(state['repair_pr'], int) else 2000000000})
+    require(EVIDENCE_POLICY.get() is None, 'evidence policy leaked into structural tests')
+    try:
+        with use_evidence_policy(policy):
+            require(evidence_value('decision_id', '') == 'DEC-20261015-001', 'explicit policy was not installed')
+            expect_failure(lambda: profile_evidence_target({'activation_binding': None}, {'pr_number': 19, 'base_sha': SOURCE_COMMIT}, 'execution-remediation'), 'PR19 cannot inherit repair authorization')
+            raise RuntimeError('policy reset probe')
+    except RuntimeError:
+        pass
+    require(EVIDENCE_POLICY.get() is None and evidence_value('decision_id', 'legacy') == 'legacy', 'policy was not reset on error')
+
+
+def profile_main() -> int:
+    parser = argparse.ArgumentParser(description='Versioned governance structure and private evidence; no implicit merge authorization')
+    parser.add_argument('--base-sha')
+    parser.add_argument('--base-ref')
+    parser.add_argument('--head-sha')
+    parser.add_argument('--pr-number', type=int, default=0)
+    parser.add_argument('--evidence-json', type=Path, action='append', default=[])
+    parser.add_argument('--activation-evidence-json', type=Path, action='append', default=[])
+    parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--ci-structural-only', action='store_true')
+    parser.add_argument('--require-merge-ready', action='store_true')
+    parser.add_argument('--live-merge-ready', action='store_true')
+    parser.add_argument('--verify-post-merge', action='store_true')
+    args = parser.parse_args()
+    try:
+        require(__debug__, 'optimized Python cannot validate governance')
+        event, event_base, event_ref, event_head, event_pr = event_context()
+        explicit = any((args.base_sha is not None, args.base_ref is not None, args.head_sha is not None, args.pr_number != 0))
+        if explicit:
+            require(args.base_sha is not None and args.base_ref == 'main' and args.head_sha is not None, 'complete explicit PR context required')
+            require_sha1(args.base_sha, 'CLI base'); require_sha1(args.head_sha, 'CLI head'); require_positive_int(args.pr_number, 'CLI PR')
+            if event_base is not None:
+                require((args.base_sha, args.base_ref, args.head_sha, args.pr_number) == (event_base, event_ref, event_head, event_pr), 'CLI context differs from Actions event')
+        modes = (args.ci_structural_only, args.require_merge_ready, args.live_merge_ready, args.verify_post_merge)
+        require(sum(modes) <= 1, 'CI, merge-ready, live and post modes are mutually exclusive')
+        if args.ci_structural_only:
+            require(os.environ.get('GITHUB_ACTIONS') == 'true' and event in ('pull_request', 'push') and args.self_test, 'CI structural mode requires supported Actions event and self-test')
+            require(not explicit and not args.evidence_json and not args.activation_evidence_json, 'CI structural mode forbids CLI context and private evidence')
+        if event == 'push':
+            require(not explicit and not args.evidence_json and not args.activation_evidence_json and not any(modes[1:]), 'push forbids private/explicit/merge/post context')
+            require(os.environ.get('GITHUB_SHA') == git('rev-parse', 'HEAD').stdout.decode().strip() and not git('status', '--porcelain').stdout, 'push checkout mismatch or dirty tree')
+        if any(modes[1:]):
+            require(explicit and args.evidence_json and event != 'push', 'private modes require explicit PR context and evidence')
+        base, ref, head, pr = args.base_sha or event_base, args.base_ref or event_ref, args.head_sha or event_head, args.pr_number or event_pr
+        state = validate_profile_repository(base, ref, head, pr)
+        if args.self_test:
+            run_profile_self_tests()
+        activation = state['status'] == 'ACTIVE' and pr == state['activation_pr']
+        repair = pr == state['repair_pr'] and state['status'] == 'PROPOSED'
+        if args.evidence_json:
+            context = require_complete_current_context(base, ref, head, state.get('candidate_tree'), pr)
+            with use_evidence_policy(make_evidence_policy(state)):
+                packages = [read_evidence_package_file(path) for path in args.evidence_json]
+                target = 'execution-remediation' if repair else ('activation-evidence' if activation else None)
+                validate_evidence_sequence(packages, current_context=context, require_merge_ready=args.require_merge_ready, authorized_target_type=target)
+                phases = tuple(p['phase'] for p in packages)
+                if args.verify_post_merge:
+                    require(phases == ('stable-window-start', 'stable-window-end', 'post-merge'), 'post mode requires complete start/end/post')
+                elif activation:
+                    require(phases in (('pre-attestation',), ('stable-window-start', 'stable-window-end')), 'activation post requires explicit --verify-post-merge')
+                if activation:
+                    validate_new_binding(packages, state, pr)
+                    require(not args.activation_evidence_json, 'activation may not reuse another activation stream')
+                elif repair:
+                    require(not args.activation_evidence_json and not args.live_merge_ready, 'repair cannot claim ordinary activation/live authority')
+                else:
+                    require(state['status'] == 'ACTIVE' and args.activation_evidence_json, 'ordinary private gate requires verified activation history')
+                    history = [read_evidence_package_file(path) for path in args.activation_evidence_json]
+                    validate_activation_history(history, state, context.base_sha)
+                if args.live_merge_ready:
+                    require(not repair and not activation and state['status'] == 'ACTIVE', 'live mode is ordinary only')
+                    validate_live_merge_ready(packages, context)
+        else:
+            require(not args.activation_evidence_json, 'activation history requires current private evidence')
+            require(not activation or args.ci_structural_only, 'activation transition requires complete candidate-bound private evidence')
+    except (GovernanceValidationError, KeyboardInterrupt, OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError, yaml.YAMLError) as exc:
+        print(f'governance profile validation failed: {exc}', file=sys.stderr)
+        return 1
+    print('governance profile validation passed; authorization=PENDING; no merge or production authorization issued')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(profile_main())

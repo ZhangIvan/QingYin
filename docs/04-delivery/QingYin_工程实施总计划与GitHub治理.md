@@ -1,16 +1,14 @@
 # QingYin 工程实施总计划与 GitHub 交付治理
 
 版本：v0.3
-状态：实施基线；[DEC-20260829-001](QingYin_DEC-20260829-001_单维护者合并治理.md) 为 `PROPOSED / effective=PENDING`
+状态：实施基线；[DEC-20261015-001](QingYin_DEC-20261015-001_治理激活执行修复.md) 为 `PROPOSED / effective=PENDING`；旧 DEC-20260829-001 仅作冻结历史
 关联：系统设计目录、设计冻结审阅、M1 核心骨架、M1 Backlog、CI 门禁与 DEC-20260829-001
 
 ## 0. 决策优先级与过渡边界
 
-单维护者 self-merge 路径只有在 DEC-20260829-001 变为 `ACTIVE` 后才是本仓库的常规合并规则。在此之前，v0.2 第 4 节第 6 步的独立 reviewer/必要审批要求及紧随段落的“高风险变更必须增加第二位维护者或安全/SRE”要求继续适用。Owner 于 2026-08-29 已表达治理 bootstrap 决策意图，但每个治理/activation PR 仍须在候选存在后取得绑定 PR/base/head/tree/changed paths 的精确 owner attestation；取得前为 `PENDING`。
+当前执行修复以 DEC-20261015-001 为唯一状态源；旧 DEC-20260829-001 保持冻结 PROPOSED/PENDING，仅用于历史原文与 PR19 重放。本文后续旧 DEC 引用中的角色、CR/Finding、安全和生产约束按新 DEC 精确继承；旧 bootstrap/activation/CLI 执行条款由新 DEC 替代，不能使用旧路径申请激活。
 
-上述 exact attestation 经 API 逐字回读为 `VERIFIED`，并且同一候选的两路 fresh Agent review、trusted-control audit、required checks 和稳定窗口全部为 `VERIFIED` 后，只对该治理 PR 或 activation evidence PR 构成替代旧第二位人类前置的一次性 bootstrap authorization。Attestation 仍不是 verifier、GitHub `APPROVED` 或人类 review。PR #18 的 CI-B0 attestation 不可复用，该例外也不能被 PR #17、业务代码、保护设置或生产操作追溯使用。
-
-DEC 不能授权自身。治理 bootstrap 必须是以 `main` 为 base、净 diff 精确符合 DEC 六文件清单且 `base..candidate` 全可达逐提交 raw history 未触碰额外路径的 PR #19；合并后仍保持 `PROPOSED / PENDING`。只有对已合并治理 commit 完成只读核验，确认 activation base 的六个治理控制文件与该 commit tree 完全一致，并由以 `main` 为 base、不修改决策正文的独立 evidence PR 回填先前 merge SHA、再经普通受保护合并后，状态才可变为 `ACTIVE`。Evidence PR 必须在同一 commit 内原子同步 DEC、本文 header 和交付 INDEX 三处状态指针，并用自包含 `activation_binding` 重新验证 PR #19 完整 start/end/post evidence；任一不一致都保持 `PENDING`。
+修复候选与 repair post 完成后仍 PENDING。独立 activation PR 的完整证据、两路 fresh review、精确 owner 接受、required checks、600秒窗口、protected merge/post 全部 VERIFIED 后才语义 ACTIVE。工程计划 header 和交付 INDEX 是新 DEC 的受控投影，文件 ACTIVE 本身不授权普通合并。新候选的接受不能复用 PR19；不改变保护、权限或生产边界。
 
 ## 1. 实施准入结论
 

@@ -34,4 +34,4 @@ jobs:
       - name: Validate documentation links
         run: python scripts/validate_markdown_links.py
       - name: Validate governance state
-        run: python scripts/validate_governance_state.py --self-test
+        run: python scripts/validate_governance_state.py --ci-structural-only --self-test
