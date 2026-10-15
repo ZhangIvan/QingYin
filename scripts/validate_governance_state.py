@@ -3776,6 +3776,9 @@ def read_evidence_package_file(path: Path) -> dict[str, Any]:
             require(evidence_size <= MAX_EVIDENCE_BYTES, f"evidence file grew beyond {MAX_EVIDENCE_BYTES} bytes while reading: {path}")
             evidence_chunks.append(chunk)
         evidence_bytes = b"".join(evidence_chunks)
+        after_metadata = os.fstat(descriptor)
+        stable_fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_nlink', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+        require(all(getattr(metadata, field) == getattr(after_metadata, field) for field in stable_fields) and len(evidence_bytes) == metadata.st_size, 'evidence file changed while being read')
     finally:
         os.close(descriptor)
     evidence_text = validate_utf8_bytes(evidence_bytes, str(path))
@@ -8719,9 +8722,12 @@ def historical_pr19() -> Any:
     require(len(source) <= MAX_VALIDATOR_SOURCE_BYTES and git_blob_sha1(source) == LEGACY_VALIDATOR and hashlib.sha256(source).hexdigest() == LEGACY_SOURCE_SHA256, 'frozen historical source mismatch')
     with tempfile.TemporaryDirectory(prefix='qingyin-historical-') as directory:
         checkout = Path(directory) / 'repo'
-        env = {key: value for key, value in os.environ.items() if not key.startswith(('GITHUB_', 'GIT_'))}
+        env = {'PATH': os.defpath, 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0', 'PYTHONNOUSERSITE': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
         for args in (['git', '-c', 'core.hooksPath=/dev/null', 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(ROOT), str(checkout)], ['git', '-C', str(checkout), '-c', 'core.hooksPath=/dev/null', 'checkout', '--quiet', '--detach', REPAIR_BASE]):
             subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=30)
+        for revision, expected in (('HEAD', REPAIR_BASE), ('HEAD^{tree}', REPAIR_TREE), (f'HEAD:{VALIDATOR_PATH}', LEGACY_VALIDATOR)):
+            actual = subprocess.run(['git', '-C', str(checkout), 'rev-parse', revision], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=15).stdout.decode('ascii').strip()
+            require(actual == expected, 'historical clone checkout identity mismatch')
         name = '_qingyin_frozen_pr19_' + Path(directory).name.replace('-', '_')
         module = types.ModuleType(name)
         module.__file__ = str(checkout / VALIDATOR_PATH)
@@ -8784,7 +8790,7 @@ def validate_activation_history(packages: list[dict[str, Any]], state: dict[str,
 def run_profile_self_tests() -> None:
     # Historical tests run against the historical tree with Actions env removed.
     with historical_pr19() as (_module, checkout, env):
-        result = subprocess.run([sys.executable, '-B', str(checkout / VALIDATOR_PATH), '--self-test'], cwd=checkout, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        result = subprocess.run([sys.executable, '-I', '-B', str(checkout / VALIDATOR_PATH), '--self-test'], cwd=checkout, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         require(result.returncode == 0, 'frozen historical self-test failed: ' + result.stderr.decode('utf-8', 'replace')[-1000:])
     text = read_document(REPAIR_DEC_PATH)
     state = parse_repair_dec(text)
@@ -8867,7 +8873,7 @@ def profile_main() -> int:
         else:
             require(not args.activation_evidence_json, 'activation history requires current private evidence')
             require(not activation or args.ci_structural_only, 'activation transition requires complete candidate-bound private evidence')
-    except (GovernanceValidationError, KeyboardInterrupt, OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, AttributeError, yaml.YAMLError) as exc:
+    except (GovernanceValidationError, KeyboardInterrupt, OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError, AttributeError, RecursionError, yaml.YAMLError) as exc:
         print(f'governance profile validation failed: {exc}', file=sys.stderr)
         return 1
     print('governance profile validation passed; authorization=PENDING; no merge or production authorization issued')
