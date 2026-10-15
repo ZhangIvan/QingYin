@@ -8570,6 +8570,7 @@ def parse_repair_dec(text: str) -> dict[str, Any]:
     else:
         require(all(state[key] != 'PENDING' for key in (*REPAIR_POINTERS, 'repair_pr', 'validator_blob')), 'ACTIVE pointers incomplete')
         require(state['repair_pr'] != state['activation_pr'] and state['repair_merge'] == state['effective_commit'], 'repair/activation pointer relationship invalid')
+        require(state['repair_parent'] == REPAIR_BASE, 'repair protected squash parent must be fixed repair base')
     return state
 
 
@@ -8645,6 +8646,8 @@ def validate_profile_repository(base: str | None, base_ref: str | None, head: st
         require(base == REPAIR_BASE and state['status'] == 'PROPOSED' and state['repair_pr'] == pr, 'repair bootstrap exact base/PR/status mismatch')
         require(entries == REPAIR_PATH_STATUS, f'repair bootstrap must change exactly five files: {entries}')
         validate_history_allowlist(base, 'HEAD', set(REPAIR_PATH_STATUS), 'execution repair bootstrap')
+        for _commit, path, old_mode, new_mode, status in reachable_history_changes(base, 'HEAD'):
+            require((status == 'A' and path == REPAIR_DEC_PATH and old_mode == '000000' and new_mode == '100644') or (status == 'M' and old_mode == new_mode == '100644'), 'repair history cannot delete/recreate existing controls or change their type')
         require(plan == expected_plan and index == expected_index, 'repair may change only controlled document projections')
     else:
         old_text = git_text_at(base, REPAIR_DEC_PATH)
@@ -8666,6 +8669,7 @@ def validate_profile_repository(base: str | None, base_ref: str | None, head: st
             require(state['activation_pr'] == pr and state['repair_pr'] != pr, 'activation PR pointer mismatch')
             require(entries == {path: 'M' for path in (REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH)}, 'activation must change exactly three documents')
             validate_history_allowlist(base, 'HEAD', {REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH}, 'new activation')
+            require(all(status == 'M' and old_mode == new_mode == '100644' for _commit, _path, old_mode, new_mode, status in reachable_history_changes(base, 'HEAD')), 'activation history permits only ordinary blob modifications')
             require(all(old[key] == state[key] for key in REPAIR_HEADER_KEYS if key not in REPAIR_MUTABLE), 'activation changed a frozen header')
             require(len(read_document(REPAIR_DEC_PATH).splitlines()) == len(old_text.splitlines()), 'activation cannot add/delete DEC lines')
             require(plan == expected_plan and index == expected_index, 'activation projection changed frozen document bytes')
@@ -8677,7 +8681,6 @@ def validate_profile_repository(base: str | None, base_ref: str | None, head: st
             merged_repair = parse_repair_dec(git_text_at(effective, REPAIR_DEC_PATH))
             require(merged_repair['status'] == 'PROPOSED' and merged_repair['repair_pr'] == state['repair_pr'], 'repair anchor is not the pending repair decision')
             require(git('show', '-s', '--format=%T %P', effective).stdout.decode().strip() == state['repair_tree'] + ' ' + state['repair_parent'], 'repair anchor tree/parent mismatch')
-    require(not git('diff', '--summary', f'{base}..HEAD').stdout, 'profile diff contains rename/mode/type changes')
     return state
 
 
@@ -8749,7 +8752,7 @@ def validate_new_binding(packages: list[dict[str, Any]], state: dict[str, Any], 
     require(binding['schema'] == 'gvn-activation-binding-v2' and binding['activation_evidence_pr'] == pr == state['activation_pr'], 'binding v2 identity mismatch')
     pre = packages[0]['pre_attestation']
     require((binding['activation_candidate_head'], binding['activation_candidate_tree']) == (pre['candidate_head'], pre['candidate_tree']), 'binding v2 candidate mismatch')
-    paths = next(bundle for bundle in packages[0]['pre_endpoint_bundles'] if bundle['component'] == 'paths')
+    paths = {bundle['component']: bundle for bundle in packages[0]['pre_endpoint_bundles']}['paths']
     files = response_value(paths, 'pull-files')
     require({item['filename']: item['status'] for item in files} == {str(path): 'modified' for path in (REPAIR_DEC_PATH, PLAN_PATH, INDEX_PATH)}, 'activation history must describe exactly three modified governance documents')
     validate_pr19_history(binding['governance_evidence_sequence'])
