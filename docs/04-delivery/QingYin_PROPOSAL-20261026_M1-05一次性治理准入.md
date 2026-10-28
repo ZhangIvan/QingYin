@@ -58,6 +58,10 @@ source/base/head/tree、workflow/runtime、规则或权限变化、证据不全�
 
 旧validator不能批准自身被替换：validate_candidate_validator_blob(8351—8359)仍绑定原blob；validate_activation_diff(761—800，尤其791—792)仍拒绝普通PROPOSED候选触碰六controls及其逐提交历史。不能改EXPECTED_*、跳过selftest、换历史workflow或以候选ACTIVE字符串求绿。候选外审计通过不等于旧required check接受。
 
+当前CI实际命令是python scripts/validate_governance_state.py --self-test。main先从Actions事件取得真实PR/base/head，再调用validate_repository：读取旧DEC、工程总计划与INDEX并执行parse_triplet、validate_source_binding，随后核候选validator blob及冻结diff，最后才运行self-test。新增制度文档或manifest不被旧程序自动读取；--self-test不是绕过真实PR结构检查的入口。
+
+旧self-test独立读取当前ROOT的workflow形成历史fixture，由validate_package_response_semantics核whole-workflow SHA、step/name/run hash、完整action occurrence及context。历史输入与live候选输入须分离、保留冻结来源，不能临时替换workflow或改旧hash库存骗绿。CI成功只证明该精确程序和候选执行的检查，不证明制度采纳或首次切换已生效。
+
 拟信任链为：已明确审定的owner创制合同与固定base来源→候选外已审审计程序/输入记录→真实候选对象→两线实质审计/CI→owner精确接受→合法受保护采纳→post。每一步仅绑定已存在对象，不填写未来SHA。审计源码和registry单向绑定，禁止互嵌最终hash；候选不能自选profile、审计器或授权根，也不import/exec候选代码证明其可信。
 
 当前没有证明旧gate到新gate的合法机器接入路径。若切换必须修改正式validator/CI，须另审确切路径、函数、diff、权威与平台可执行性；未证明则保持BLOCKED。这是仍待解决的工程/采纳断点，不以寻找第二维护者作为唯一方案，也不将owner新决定伪装成旧规则已经批准。
@@ -95,3 +99,25 @@ PR17/20均OPEN未合并。R2仅新增两个审计模块，workflow仍为M；work
 
 
 G15已审原文SHA256为75ca244aceb79ffee999b4317ec58e95a33c030768cec37391c41e54bdcaa2b9；G15交接归档为69b10ac13544cdb52277ff2b1c705c2bba97b7296559892045503da7bd4e7dbf；G14 receipt为c3e663b439d30cfdfaf34b2eeab3b3489dfe91ed53928350a1606ac690125a7c。旧授权已消费，固定路径/截止不可自动复用。当前批次2026-10-28仅授权云端文档准备、最小验证与本地提交，不发布本修订；整轮05:14:05UTC硬停。候选自身head/tree/hash仅记录树外，避免自引用。
+
+## 八、A/B一次性新规则替代设计（PROPOSED / NOT_APPLIED）
+
+时间说明：2026-10-28本次仅发布方案文档修订并验证，前文G20批次05:14:05UTC/不发布措辞是保留的历史回执，不是当前状态；本轮Agent截至06:15:34UTC，CI可自行完成，本次不构成A/B采纳或激活。
+
+此设计不是M旧程序认可新checker的路径。它提议先合法采纳一份新的规范契约，再以该契约判定唯一一次B；M旧拒绝原样保留。当前规范没有已证明的通用改制入口，owner规则制定权依据及A的合法采纳仍须真实明确确认，不能从admin或泛泛“继续”推导。A/B均无本轮合并、激活或保护修改授权。
+
+A准备：目标checker源文件和候选外auditor实现须先存在、可完整读取并经两路分离实质审计，不在此文填造未来hash。正式A候选拟只新增docs/04-delivery/QingYin_DEC-20261028-001_单维护者一次性检查器切换.md和docs/04-delivery/governance/DEC-20261028-001/checker-transition-v1.json；编号/路径开工前核冲突，冲突停止。旧六controls不变。manifest单向固定已存在target validator的path/blob/SHA256、完整可恢复源字节或公开Git对象定位、auditor来源/SHA、允许B路径、固定制度来源及单次nonce/期限，不依赖未来B head。源字节即使嵌于文档也是高风险待审代码，不因文档后缀免审，不在A执行。
+
+A决议必须逐项明确：仅在A真实合法采纳条件满足后，就一次B显式替代v0.2内部人审前置及旧DEC§9/旧checker冻结对本次target path/blob集合的约束；不谎称旧规则已批准，不改旧DEC原文，不复用PR20例外。不替代法律/外部门/平台强制规则，不覆盖业务、Rust增强或后续迁移。旧M检查FAIL须保存，不能改成PASS。owner须对真实A候选及制度改变作具名精确决定，说明规则制定责任和依据；决定放候选外，避免A内回填自身head/hash。文档或ACTIVE字符串本身不生效，A须满足真实平台流程和已确认的规范采纳条件；A目前尚未存在或被接受。
+
+B执行：base只能是未来实际A受保护采纳commit，不能自行挑同名manifest。B拟仅修改scripts/validate_governance_state.py为A固定target blob，并新增docs/04-delivery/governance/DEC-20261028-001/consumption-v1.json；不改workflow、旧DEC、INDEX/PLAN、业务、锁文件或R2。receipt仅绑定已存在A commit/manifest摘要、nonce、target blob和B base，不写自身未来head。B精确head/tree形成后另作候选外审计和owner精确接受；A不是对任意B的预签。
+
+新checker选择：先由候选外已审固定实现核A真实采纳事实、制度/manifest原字节、target程序字节和执行对象，再运行已绑定新程序。新程序只能从经外部确认的B base读取那个固定manifest，不提供候选CLI/env/profile/标签/正文自选policy或auditor。候选自改A文件、target、路径、nonce、有效期或审计来源都失败关闭。B相对A的全部可达逐提交history限上述两路径，禁止中途越界后恢复、删除重建、rename/mode/symlink/gitlink。保留旧库存用于M/R历史重放，不能将新checker的自测当独立授权。metadata只能检声明，不证明实质独立。
+
+无循环与防重放：A只绑定已有target/auditor字节，不含B head；B引用已存在A commit，不回填自身hash；B head的接受存树外。授权只消费一次真实受保护B采纳，不能由本地成功或CI绿提前消费。receipt路径必须在A base不存在；要求B base及临门main精确等于A采纳commit，消费后main不再等于A且receipt已存在，拒绝第二次。分叉尝试不能继承另一次B接受；过期、漂移、未知写结果停止，不盲重试。平台无expected-base原子CAS的竞态仍为残余：若无法满足精确base/单次及post断言，就不判定生效；不能声称nonce彻底消除并发风险。
+
+结果必须分列OLD_CHECK_RESULT（固定M程序 against B的真实拒绝）、NEW_CHECK_RESULT（A固定新程序的实际结果）和ADOPTION_STATUS。旧程序可由候选外固定源码bootstrap在真实B对象上下文运行，不能执行候选篡改版来冒充旧检查；具体bootstrap实现须另审。新程序exit0只表示新结构成立，formal接受仍依A合同及B独立证据；未知或未采纳输出PENDING/BLOCKED。当前workflow会运行B tree下的candidate脚本，故仅其同名context绿灯绝不是外部来源验证的替代。
+
+平台条件一：若另人Approve/CodeOwner/last-push规则强制他人审批，无人且不改保护则A或B不能完成，禁止造人或自批。条件二：若required workflow/check实质固定旧M程序且其FAIL不可替代，B不能合并，不伪造状态、不忽略失败、不改保护。条件三：若平台现有required context/app确实允许由已合法A授权的新checker真实产生，且没有不满足的独立人审/固定旧workflow规则，则A规范生效、候选外来源核验、B精确接受、真实CI及受保护采纳/post可组成新规则下的条件可行路线；不是M先认可B。还须取得实际contexts/app/workflow约束、审批配置、A权威/采纳原像、target/auditor可恢复来源、两线审计、B接受/执行/历史/真实run及post。当前这些正式前提未齐，平台详情UNKNOWN，不宣布可执行或生效。
+
+回滚和失效：未采纳停止候选；A未消费可由owner撤回其外部接受并保留事实。B采纳后不能复用本次nonce回滚checker；恢复旧blob亦是新的受保护superseding/revert决定，不能让旧DEC约束悄然重启或擦除新旧结果。关键finding、来源不足、target/runtime/权限变化、到期、采纳/post不符即停，保留失败与远端实际事实，不管理员绕过。本设计仅供后续精确裁决，当前不实施、提交或发布A/B。
