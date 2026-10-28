@@ -1,23 +1,10 @@
-# QingYin M1-05一次性治理准入提案（未登记为生效DEC）
+# QingYin M1-05单维护者治理修订与一次性准入提案
 
 status=PROPOSED/PENDING；authority=UNRESOLVED；formal=BLOCKED；NOT_MERGE_READY。
 
-这是单文档PROPOSAL，不占用正式DEC编号，不改变旧DEC或六项控制。
+这是未登记为生效DEC的单文档PROPOSAL。本文以真实唯一维护者为长期前提，不以寻找第二账号或其他维护者为拟议制度前置。不修改旧DEC、六项治理控制或业务，不授予自身权力。当前无合并、activation、改保护或部署授权；正式技术切换能否执行尚未证明。
 
-## 一、目的与固定事实
-
-本提案供独立真人审阅，讨论如何合法采纳一次性控制迁移，不授予自身或后续代码权利。G16于2026-10-26约00:57—00:59 UTC经GitHub连接器刷新main、PR17、PR20：固定对象未漂移；这是一次回读，不代表持续监控。
-
-| 对象 | 固定commit | tree |
-|---|---|---|
-| M/main | 838faa2633d78058a3e180196cc7e440d8adbf37 | 639accceb367c4b5d3eeb667f49e50493478af8a |
-| H17/PR17 | 41b0308e93d595b3978bcf9d9b690da794e0c1aa | 9e98c8db5b83ef89d1346eaf2f21ff4b302fb426 |
-| R/PR20 | 51791ae7f438570d5bec52902bf86de878294d11 | 117812811728b2478167e9655701920ef79689e8 |
-| R2隔离工具候选 | 4907a9c87a0a0c441b01bd392b90447174941d36 | b9e20f1110f6917271376d033af5283a67e7ed33 |
-
-PR17/20均OPEN未合并。R2仅新增两个审计模块，workflow仍为M；workflow fixture是树外受测文本，既不是实际workflow变更，也不是业务候选。旧D/G3未恢复，不以名称或旧测试代替对象。
-
-## 二、规则层次与两项待决
+## 一、三层规则及修订目标
 
 | 来源、固定对象及条款 | 当前效力与边界 |
 |---|---|
@@ -28,74 +15,83 @@ PR17/20均OPEN未合并。R2仅新增两个审计模块，workflow仍为M；work
 
 PR20已有10月19日公开owner声明（issuecomment-6257455023），绑定R/M及当时正文；声明存在，底层私有证据本轮未验全，不能复用给R2或本草案。
 
-待决A：谁依据哪条现行有效条款采纳一次性替代契约？须由合法维护责任人与独立真人审查落实，精确owner接受不能由Agent或方向授权代签。
 
-待决B：旧gate如何合法承接新gate？须明确候选外固定审计器来源、可信base和精确绑定；不能让候选选择自身hash/profile或以ACTIVE文字自选政策。目前没有证明通用承接入口存在。即使补齐人审和接受，也不等于旧validator会批准新validator。
+以上v0.2人审要求尚未被正式替代，这是现行规范事实；不是本提案要求永久寻找其他维护者的设计选择。拟议制度明确改变仓库内部审阅机制，不能假称已经满足旧人审条件。M默认validator仍真实冻结controls；账号admin不等于规范豁免、机器放行或平台保护绕过权。
 
-## 三、最小路线及工程合同
+2026-10-28只读回读确认连接ZhangIvan/ID25630763，repo权限含admin/push；main仍M，PR21仍draft且reviews为空。平台required approval count、CODEOWNER/最近提交审批及ruleset叠加详情仍UNKNOWN；不盲重试已有403端点。若平台强制另一人有效Approve，且无人又不改保护，正式合并无可执行路径；保持draft和隔离工程，不造账号/署名，不绕过。需要时仅请求owner读取最小设置字段，不索要token。
 
-第一阶段仅准备单新增文档供审阅。未来如另获发布及受保护采纳授权，文本进入main只取得固定base来源，PROPOSED不自动生效。第二阶段须先裁定A/B，再另审精确diff、隔离实现及验证；此前禁止正式控制实施。这是可行性待验证的两阶段路线，不是已证明合法入口，不建议先merge/activate PR20解锁Rust。
+## 二、拟议单维护者制度
 
-拟另审写路径如下，均NOT_APPLIED：
+唯一owner承担风险与最终精确接受责任，Agent不可代签。候选形成后，接受须绑定真实PR、base/head/tree、路径、风险、原始审计/CI证据、残余有效期及撤销条件，不预签未来SHA。owner不计入审计quorum。
 
-| 路径 | 目的、允许增量与禁止范围 |
+两次分离Agent审计与实现者分开开展：
+
+| 审计线 | 范围与必须交付 |
 |---|---|
-| 新具名`docs/04-delivery/QingYin_DEC-<待定编号>_<待定名称>.md` | 精确列supersedes及接受/生效合同；编号、授权根尚待审，不改旧DEC。 |
-| `scripts/validate_governance_state.py`及未来具名独立模块 | 仅合法承接机制及历史/当前来源分离；现有两模块与采集器只是隔离工具，不接入正式默认入口自证可信。 |
-| `.github/workflows/rust.yml` | 未来仅审定的all-features/locked、strict rustdoc、doctest、release guard及paths增量；禁止重复MSRV或削弱保护字段。 |
-| `.github/workflows/design-contracts.yml` | 仅在合法入口确需接线时另审精确命令；当前没有修改授权。 |
-| `docs/04-delivery/INDEX.md`、`docs/04-delivery/QingYin_工程实施总计划与GitHub治理.md` | 仅经审定投影及依赖说明；不改旧接受事实、不以副本激活规则。 |
+| A：业务与安全 | 固定规格、租户/actor/runtime授权、状态机、generation/ABA、幂等、取消补偿、终态竞争、secret与日志；给函数/测试映射、可构造序列、finding及未覆盖项 |
+| B：治理与供应链 | 精确diff/逐提交历史、权限、Action及runtime、来源/fixture/execution绑定、门禁状态、回滚和证据污染；给独立读取记录、对象/命令、finding与限制 |
 
-release guard脚本在M中尚不存在，不能只增加workflow调用就宣称运行完备。未来须另审业务候选中的`scripts/validate_security_release_guard.py`来源、接口与失败语义；本控制提案不夹带H17业务、M1-06或RC01修复。审阅者应先核对每项增量是否真的必要；无需变动的文件保持原字节，不能把路径表当作整文件修改许可。
+分别固定报告后再交叉核对，不互相代写；缺实质来源应为INCONCLUSIVE，不能只引用另一路摘要就报独立通过。会话身份、schema、摘要或metadata检查只能验证声明与绑定，不能证明Agent真实独立、实质审阅充分或消除共享模型/平台相关错误。owner须明确承担该剩余风险。CI不能伪装真人Approve，不制造第二账号、不将Agent标为GitHub人类APPROVED。
 
-不得由此表自动扩大到六controls。M/R冻结源码、原始包及各自selftests保留；历史fixture与当前候选检查分离，不换旧workflow骗绿。新workflow须保留ubuntu-24.04、full history、persist-credentials:false、pinned actions、只读permissions、全部GVN证据及唯一增强MSRV。逐项绑定whole-file、step index/run hash、action occurrence/context，以及candidate base/head/tree、实际execution commit/tree/有序parents；tool、fixture、业务候选各自绑定，互不代替。缺合法根、原像或精确diff即停。
+拟适用可回滚的仓库代码、契约、文档、测试及CI/治理变更；按语义风险而非文件扩展名分级。CR0/1可简化证据但保留分离审计与精确绑定；CR2/3要求完整两线、真实适用CI、owner精确接受、至少600秒稳定窗口和临门回读。600秒是拟议严格合同，不是当前已生效的人审替代权。
 
-## 四、验证、退出与回滚
+Open P0永远阻断；P1默认阻断，仅非外部强制门、范围有界且可逆的残余可逐项限期接受。secret泄露、租户/客户数据边界缺陷、真实凭据/流量、不可恢复损坏不准残余豁免。法律/合同、第三方或组织审批、生产/发布/外部状态授权、GitHub强制保护均不被替代；CR4不因本制度自动授权。
 
-以下映射来自M，不表示检查通过；未来实际候选须重新核命令及真实run/job/attempt/log，当前全部NOT_RUN：
+source/base/head/tree、workflow/runtime、规则或权限变化、证据不全、发现未处置、接受撤回/过期即失效重绑。不得仅凭Action SHA声称平台runtime也被冻结。
 
-| check | workflow / job | 命令类别 |
+## 三、精确supersedes与owner制度决定
+
+未来生效时拟精确替代：
+
+1. v0.2工程总计划§4第6步及紧随独立人工/第二维护者段，仅就本仓库内部可回滚变更，替换为两线分离Agent审计、适用CI和owner精确接受；保留讨论解决、风险与外部门。
+2. M旧DEC header supersedes及§9中与新一次性承接冲突的PR19-only bootstrap、PROPOSED六controls冻结和三文件activation合同；旧原文字节保留，新的具名决策明确新适用边界，不修改历史接受。
+
+这是拟改范围，不是现行修改许可，不追溯PR17/19/20。PR20既有owner声明保持原样且只绑定R/M及原正文，不能复用；其底层私有原像本轮未验全，不宣称不存在。R repair未生效、Rust冻结，不能假定先合并/激活PR20即可解锁Rust。
+
+现行有效文本没有已证明的通用单人改制采纳入口。拟由owner明确作出规则创制决定，说明其仓库规则制定责任与依据，接受这是显式替换旧人审要求而非沿旧规则审批通过。该决定的权威及适用性仍须审定，不能由Agent从admin权限推导，不能覆盖外部或平台强制规则。用户设计/准备方向授权不等于此后精确候选接受，也不等于合并或激活。
+
+## 四、分阶段承接及bootstrap边界
+
+阶段A：只准备此非冻结PROPOSED修订文档及候选外审计材料，允许设计和经另行审定的隔离工程。owner制度方向可被明确记录，但不自授旧门内豁免。未来若受保护采纳文本进入main，只形成固定base来源，不自动ACTIVE。
+
+阶段B：技术gate切换另立精确工作包。先审候选外固定审计来源及机器承接合同，再形成实际控制候选并另取owner精确接受；只有合法受保护采纳及post验证完成，才可能判定生效。本轮不执行这些采纳/激活步骤。
+
+旧validator不能批准自身被替换：validate_candidate_validator_blob(8351—8359)仍绑定原blob；validate_activation_diff(761—800，尤其791—792)仍拒绝普通PROPOSED候选触碰六controls及其逐提交历史。不能改EXPECTED_*、跳过selftest、换历史workflow或以候选ACTIVE字符串求绿。候选外审计通过不等于旧required check接受。
+
+拟信任链为：已明确审定的owner创制合同与固定base来源→候选外已审审计程序/输入记录→真实候选对象→两线实质审计/CI→owner精确接受→合法受保护采纳→post。每一步仅绑定已存在对象，不填写未来SHA。审计源码和registry单向绑定，禁止互嵌最终hash；候选不能自选profile、审计器或授权根，也不import/exec候选代码证明其可信。
+
+当前没有证明旧gate到新gate的合法机器接入路径。若切换必须修改正式validator/CI，须另审确切路径、函数、diff、权威与平台可执行性；未证明则保持BLOCKED。这是仍待解决的工程/采纳断点，不以寻找第二维护者作为唯一方案，也不将owner新决定伪装成旧规则已经批准。
+
+## 五、工程不变量与范围
+
+本次只修订本文件，不新增审计模块、不扩测试矩阵；不重复已有R2工具。R2与采集器仍仅隔离工具，metadata/schema正例不构成Agent独立性证明。后续若需正式入口变更，仅另审scripts/validate_governance_state.py的main/validate_repository/validate_activation_diff/validate_candidate_validator_blob及必要design-contracts.yml接线、INDEX/工程总计划投影；这不是整文件改写授权，六controls当前不变。
+
+M/R历史DEC、validator、workflow及原始证据固定重放；当前候选检查与历史fixture分离。保留ubuntu-24.04、fullhistory、persist-credentials:false、pinned actions、只读permissions、全部GVN及唯一MSRV。保留whole-file、step index/run hash、action occurrence/context、candidate base/head/tree及execution/tree/ordered parents绑定。Node20弃用与runner强制Node24警告另属受控兼容迁移，不顺便改workflow。
+
+release guard脚本在M中不存在，未来业务候选的脚本来源和失败语义须另审，本案不混入H17业务、M1-06或RC01 fake修复。
+
+## 六、验证、回滚与停止
+
+当前修订候选只做diffcheck、唯一文档路径/100644、完整历史/clean、六controls等M，以及现有设计资产和Markdown链接检查。不得冒用PR21旧head运行新候选base-aware CLI；新head未发布时远端CI为NOT_RUN。旧PR21五success仅属于8d04abeef3ae4ef7002c26605653844c987122f7及其合成execution，不能转为本修订的CI。
+
+未来真实候选的contract-fixtures、format-lint、unit、security、msrv均须按实际配置绑定check app、run/job/attempt、head/base/tree、execution及日志。不得改workflow补触发求绿；未触发写NOT_RUN。owner接受、审计、窗口随候选/来源变化失效，不能用旧包或摘要代原像。
+
+未正式采纳前停止隔离候选不影响main；正式回滚仍是合法受保护superseding/revert/forward-fix，保留历史及旧接受，不改保护或hash绕过。基线漂移、权限/来源不明、未知执行结果、关键finding、平台门无法满足或截止不足即停相应阶段。当前无合并、激活、保护修改或部署授权，不联系他人，不请求review，不恢复定时任务。
+
+旧C08 UNKNOWN保持；G14仅三个无害probe和适配后固定R2函数的一次限定证据闭合，不证明历史修复、竞态注入、任意后代或host故障处理。D/G3未恢复。
+
+## 七、准备期历史事实（不作为当前授权）
+
+G16于2026-10-26约00:57—00:59 UTC回读main/PR17/PR20，当时未漂移；不是持续监控。其本地候选88969fff797e5b71f70170301a9faf5f81d3e9ed后来经API重建为PR21旧head8d04abeef3ae4ef7002c26605653844c987122f7，tree相同不意味着接受可转移。旧文档中的未发布表述和2026-10-26 01:54:57UTC截止属于当时准备批次；后续PR21发布与CI已在G18记录，不回写历史receipt。
+
+| 对象 | 固定commit | tree |
 |---|---|---|
-| contract-fixtures | design-contracts.yml / design-contracts | 设计资产、Markdown链接、原治理`--self-test` |
-| format-lint | rust.yml / format-lint | fmt、locked check/Clippy、边界与fixture校验 |
-| unit | rust.yml / unit | locked workspace tests |
-| security | rust.yml / security | secret regression与security/observe tests |
-| msrv | rust.yml / msrv | Rust1.85.0 locked全workspace/all-targets/all-features check |
+| M/main | 838faa2633d78058a3e180196cc7e440d8adbf37 | 639accceb367c4b5d3eeb667f49e50493478af8a |
+| H17/PR17 | 41b0308e93d595b3978bcf9d9b690da794e0c1aa | 9e98c8db5b83ef89d1346eaf2f21ff4b302fb426 |
+| R/PR20 | 51791ae7f438570d5bec52902bf86de878294d11 | 117812811728b2478167e9655701920ef79689e8 |
+| R2隔离工具候选 | 4907a9c87a0a0c441b01bd392b90447174941d36 | b9e20f1110f6917271376d033af5283a67e7ed33 |
 
-source/base/head/tree/workflow任一改变，旧CI、review、接受及窗口证据失效。现行真人审阅前置仍须满足；若未来合法采纳M/R式方案，双fresh审查、trusted-control audit、owner精确接受、至少600秒稳定窗口、临门回读和post亦须按其有效条款执行。提案可要求这些更严证据，但不据此提前取得人审替代权。缺必要项、Open P0/未接受Open P1、P2未处置或讨论未解决即停。
+PR17/20均OPEN未合并。R2仅新增两个审计模块，workflow仍为M；workflow fixture是树外受测文本，既不是实际workflow变更，也不是业务候选。旧D/G3未恢复，不以名称或旧测试代替对象。
 
-回滚仍需合法受保护revert/forward-fix路径；未生效前停止候选不等于回滚main。不得改保护、改历史hash或重写证据求绿。
 
-旧C08证据链UNKNOWN保留。G14仅证明三个无害probe和一次适配后固定R2函数的WORKFLOW拒绝及新证据闭合；不是原CLI原样运行，也未测竞态注入、任意后代、host故障或普遍物理清理保证。
-
-## 五、授权边界与最小外部输入
-
-本轮已授权云端准备此单文档、最小验证和本地提交，不再申请同一准备授权。发布须另获绑定具体单文档commit的分支推送、draft PR及原有CI授权；仅向指定reviewer发送一次GitHub review request须另行明确同意，不默认邮件或私聊。当前不发布、不联系他人。merge、activation、protection修改和deploy仍禁止，不是自动尾项；改保护没有默认必要性。
-
-真正待维护者落实的是现行认可的权威路线、独立真人角色及其接受，随后才是新候选精确owner接受和合法受限原像读取。只需文件位置、清单及读取权限，不索要token、不宣称私有包不存在。本草案及本轮消息均不作为正式批准记录，不自动向用户发新批准问题。
-
-## 六、送审合同与权限核实
-
-责任人须说明真实GitHub身份、维护角色和可决定的事项，不能仅凭仓库同名推定当前用户身份。指定的一名独立真人应审阅精确提案、规则原文、两个待决问题、风险与回滚，给出理由、发现及未解决事项；模板默认PENDING/CHANGES_REQUIRED，不预填APPROVED。
-
-能提交review不等于Approve可计入仓库门槛。当前具体reviewer权限、保护审批详情仍UNKNOWN；M/R均未发现CODEOWNERS文件。人选确定后先用现有合法只读连接核查，确实不可读取才请求最小设置页面或脱敏导出；不盲重试已403端点，不索取凭据，不建议改变保护。
-
-单文档送审不以取得R私有原始包为前提。只有未来裁定明确依赖某历史证明时，才列所需原像文件、合法受限位置和读取权限；公开声明不等于底层证明已验全，也不能因不可读宣称不存在。PR20旧声明保持不动、不复用、不追加评论。
-
-## 七、阶段、验证与停止
-
-第一阶段输入是固定M、已审G15和现行规则；产物是本单文档及树外PR草稿、真人review/owner模板、操作手册、证据读取清单和manifest。全文静态审查后，仅作一个诚实身份本地提交；候选自己的head/tree/doc hash只记树外，避免自引用。本任务使用工具默认codex/前缀，与CONTRIBUTING原分支枚举不同；不为命名修改规范。
-
-验收：相对M仅本文件新增100644，六controls磁盘和HEAD逐字节等M，M祖先、线性完整历史、clean、diffcheck；设计资产、链接、原M治理self-test各一次。原CLI显式base-aware上下文必须有真实PR号；当前无远端PR，不虚构或借用PR17/20。可运行不带PR上下文的真实CLI本地结构检查，但不得称为base-aware候选准入或远端检查通过。失败保留日志，不改validator/hash求绿。
-
-第二阶段仅在主审审定精确材料后讨论具体发布授权；原有CI的真实execution及review绑定仍待发布后取得。单文档进入main也不会自动解决A/B或激活政策。权威契约和机器承接机制未裁定，正式控制实施保持BLOCKED。若解除正式冻结必须受保护采纳/激活，本轮只能解除准备与审阅材料不足，不能承诺完全解除正式准入。
-
-停止或文档返工只影响本隔离分支；不重写旧证据、不回滚main、不改保护。任何base、source、候选变化须重新绑定材料；不自动扩至业务变基、M1-06或fake修复。当前没有新增权限请求，亦不自动向任何人发送批准问题。
-
-## 附录：历史证据与恢复边界
-
-G15已审原文SHA256：75ca244aceb79ffee999b4317ec58e95a33c030768cec37391c41e54bdcaa2b9。
-G15交接归档SHA256：69b10ac13544cdb52277ff2b1c705c2bba97b7296559892045503da7bd4e7dbf。
-G14 receipt SHA256：c3e663b439d30cfdfaf34b2eeab3b3489dfe91ed53928350a1606ac690125a7c。
-
-恢复须先核归档、manifest及Git对象；旧执行授权已消费，固定路径/截止脚本不可直接复用。G14新证据闭合不修复历史C08 UNKNOWN；D/G3未恢复，W1只是fixture。本轮一次授权硬截止2026-10-26 01:54:57 UTC（09:54:57 UTC+8），01:49 UTC开始清理，不恢复定时任务。
+G15已审原文SHA256为75ca244aceb79ffee999b4317ec58e95a33c030768cec37391c41e54bdcaa2b9；G15交接归档为69b10ac13544cdb52277ff2b1c705c2bba97b7296559892045503da7bd4e7dbf；G14 receipt为c3e663b439d30cfdfaf34b2eeab3b3489dfe91ed53928350a1606ac690125a7c。旧授权已消费，固定路径/截止不可自动复用。当前批次2026-10-28仅授权云端文档准备、最小验证与本地提交，不发布本修订；整轮05:14:05UTC硬停。候选自身head/tree/hash仅记录树外，避免自引用。
